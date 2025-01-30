@@ -4,37 +4,35 @@
 
 namespace Microsoft.DotNet.Docker.Tests
 {
-    public class OS
+    public static class OS
     {
         // Alpine
         public const string Alpine = "alpine";
-        public const string Alpine317 = $"{Alpine}3.17";
-        public const string Alpine318 = $"{Alpine}3.18";
-        public const string Alpine318Composite = $"{Alpine318}-composite";
+        public const string Alpine320 = $"{Alpine}3.20";
+        public const string Alpine321 = $"{Alpine}3.21";
+
+        // AzureLinux
+        public const string AzureLinux = "azurelinux";
+        public const string AzureLinuxDistroless = $"{AzureLinux}-distroless";
+        public const string AzureLinux30 = $"{AzureLinux}3.0";
+        public const string AzureLinux30Distroless = $"{AzureLinux30}-distroless";
 
         // Debian
         public const string Bookworm = "bookworm";
         public const string BookwormSlim = $"{Bookworm}{SlimSuffix}";
-        public const string Bullseye = "bullseye";
-        public const string BullseyeSlim = $"{Bullseye}{SlimSuffix}";
-        public const string Buster = "buster";
-        public const string BusterSlim = $"{Buster}{SlimSuffix}";
 
         // Mariner
         public const string Mariner = "cbl-mariner";
-
         public const string MarinerDistroless = $"{Mariner}-distroless";
-        public const string Mariner10 = $"{Mariner}1.0";
-        public const string Mariner10Distroless = $"{Mariner10}-distroless";
         public const string Mariner20 = $"{Mariner}2.0";
         public const string Mariner20Distroless = $"{Mariner20}-distroless";
 
         // Ubuntu
-        public const string Bionic = "bionic";
-        public const string Focal = "focal";
         public const string Jammy = "jammy";
-        public const string JammyChiseled = "jammy-chiseled";
-        public const string UbuntuChiseled = "ubuntu-chiseled";
+        public const string JammyChiseled = $"{Jammy}{ChiseledSuffix}";
+        public const string Noble = "noble";
+        public const string NobleChiseled = $"{Noble}{ChiseledSuffix}";
+        public const string UbuntuChiseled = $"ubuntu{ChiseledSuffix}";
 
         // Windows
         public const string NanoServer = "nanoserver";
@@ -45,6 +43,8 @@ namespace Microsoft.DotNet.Docker.Tests
         public const string ServerCoreLtsc2022 = $"{ServerCore}-ltsc2022";
 
         // Helpers
+        public const string DistrolessSuffix = "-distroless";
+        public const string ChiseledSuffix = "-chiseled";
         public const string SlimSuffix = "-slim";
     }
 }

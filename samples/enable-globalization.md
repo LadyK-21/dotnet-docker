@@ -15,6 +15,7 @@ In many scenarios, globalization support with ICU is required, for example, to c
 - Alpine `sdk` images
 - Debian images
 - Ubuntu images
+- All [`extra` variant](../documentation/image-variants.md) images
 
 .NET container images that do not include ICU:
 
@@ -23,7 +24,18 @@ In many scenarios, globalization support with ICU is required, for example, to c
 
 Images that do not include ICU enable [Globalization Invariant Mode](https://aka.ms/dotnet/globalization/invariant), which provides more basic globalization behaviors in absence of using ICU.
 
-Some users want to add ICU to one of the image types that doesn't include it. It is counter-productive to remove ICU from an image that already includes it.
+Some users want to add ICU to one of the image types that doesn't include it. It is counter-productive to remove ICU from an image that already includes it; it doesn't actually reduce the size of the image since it's stored in an earlier layer which cannot be changed.
+
+### Use of `Microsoft.Data.SqlClient` requires ICU to be installed
+
+When using `Microsoft.Data.SqlClient` or Entity Framework Core without ICU installed, the following exception may be thrown when attempting to connect to a database:
+
+```text
+System.Globalization.CultureNotFoundException: Only the invariant culture is supported in globalization-invariant mode. See https://aka.ms/GlobalizationInvariantMode for more information. (Parameter 'name')
+en-us is an invalid culture identifier.
+```
+
+This is by design. `Microsoft.Data.SqlClient` requires ICU to be installed. See this [Sql Client issue](https://github.com/dotnet/SqlClient/issues/220) for more information.
 
 ### Alpine images
 
@@ -42,7 +54,7 @@ RUN apk add --no-cache \
 
 ### Ubuntu chiseled images
 
-ICU can be added to an Ubuntu chiseled image, as demonstrated by https://github.com/ubuntu-rocks/dotnet/issues/21.
+ICU can be added to an Ubuntu chiseled image, as demonstrated in this [chisel issue](https://github.com/ubuntu-rocks/dotnet/issues/21).
 
 ## Tzdata
 
@@ -77,7 +89,7 @@ RUN apk add --no-cache tzdata
 `tzdata` can be added to a .NET Ubuntu image with the following `Dockerfile` fragment.
 
 ```bash
-apt update && DEBIAN_FRONTEND=noninteractive && apt install -y tzdata && rm -rf /var/lib/apt/lists/*
+apt update && DEBIAN_FRONTEND=noninteractive apt install -y tzdata && rm -rf /var/lib/apt/lists/*
 ```
 
 ### Launching a container with timezone information

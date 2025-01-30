@@ -6,7 +6,7 @@ using System;
 
 namespace Microsoft.DotNet.Docker.Tests
 {
-    public class SampleImageData : ImageData
+    public record SampleImageData : ImageData
     {
         /// <summary>
         /// Gets or sets a value indicating that this sample is published as a Docker image.
@@ -19,10 +19,6 @@ namespace Microsoft.DotNet.Docker.Tests
         {
             string tagPrefix = GetTagNameBase(imageType);
             string os = OS;
-            if (os == Tests.OS.Alpine)
-            {
-                os += "-slim";
-            }
 
             string tag = GetTagName(tagPrefix, os);
             if (!IsPublished)

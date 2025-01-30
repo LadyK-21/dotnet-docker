@@ -14,16 +14,16 @@ using Xunit;
 
 namespace Microsoft.DotNet.Docker.Tests
 {
-    public abstract class ImageData
+    public abstract record ImageData
     {
         private readonly List<string> _pulledImages = new List<string>();
 
         public Arch Arch { get; set; }
         public bool IsArm => Arch == Arch.Arm || Arch == Arch.Arm64;
         public string OS { get; set; }
-        public bool IsDistroless => OS.Contains("distroless") || OS.Contains("chiseled");
-        public virtual int DefaultPort => IsDistroless ? 8080 : 80;
-        public virtual int? NonRootUID => IsWindows ? null : 64198;
+        public bool IsDistroless => OS.Contains(Tests.OS.DistrolessSuffix) || OS.Contains(Tests.OS.ChiseledSuffix);
+        public virtual int DefaultPort => 8080;
+        public virtual int? NonRootUID => IsWindows ? null : 1654;
 
         private static readonly Lazy<JObject> s_imageInfoData;
 
@@ -134,26 +134,24 @@ namespace Microsoft.DotNet.Docker.Tests
 
         public static string GetRepoNameModifier() => $"{(Config.IsNightlyRepo ? "/nightly" : string.Empty)}";
 
-        public static string GetImageName(string tag, string variantName, string repoNameModifier = null)
+        public static string GetImageName(string tag, string repoName, string repoNameModifier = null)
         {
-            string repo = $"dotnet{repoNameModifier ?? GetRepoNameModifier()}/{variantName}";
+            string repo = $"dotnet{repoNameModifier ?? GetRepoNameModifier()}/{repoName}";
             string registry = GetRegistryName(repo, tag);
 
             return $"{registry}{repo}:{tag}";
         }
 
-        protected string GetTagName(string tagPrefix, string os) =>
-            $"{tagPrefix}-{os}{GetArchTagSuffix()}";
-
-        protected virtual string GetArchTagSuffix()
+        protected string GetTagName(string tagPrefix, string os, string tagPostfix = null)
         {
-            if (Arch == Arch.Amd64 && !DockerHelper.IsLinuxContainerModeEnabled)
-            {
-                return string.Empty;
-            }
-
-            return $"-{GetArchLabel()}";
+            IEnumerable<string> tagParts = [ tagPrefix, os, tagPostfix, GetArchTagSuffix() ];
+            tagParts = tagParts.Where(s => !string.IsNullOrEmpty(s));
+            return string.Join('-', tagParts);
         }
+
+        protected virtual string GetArchTagSuffix() => (Arch == Arch.Amd64 && !DockerHelper.IsLinuxContainerModeEnabled)
+            ? string.Empty
+            : GetArchLabel();
 
         protected string GetArchLabel() =>
             Arch switch

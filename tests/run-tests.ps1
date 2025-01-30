@@ -8,7 +8,7 @@
 param(
     [Parameter(ParameterSetName = "Version")]
     [string]$Version = "*",
-    
+
     [Parameter(ParameterSetName = "Paths")]
     [string[]]$Paths = @(),
 
@@ -18,6 +18,8 @@ param(
 
     [string]$Registry,
 
+    [string]$CacheRegistry,
+
     [string]$RepoPrefix,
 
     [switch]$DisableHttpVerification,
@@ -26,13 +28,15 @@ param(
 
     [string]$ImageInfoPath,
 
-    [ValidateSet("runtime", "runtime-deps", "aspnet", "aspnet-composite", "sdk", "pre-build", "sample", "image-size", "monitor")]
-    [string[]]$TestCategories = @("runtime", "runtime-deps", "aspnet", "aspnet-composite", "sdk", "monitor"),
+    [ValidateSet("runtime", "runtime-deps", "aspnet", "sdk", "pre-build", "sample", "image-size", "monitor", "aspire-dashboard")]
+    [string[]]$TestCategories = @("runtime", "runtime-deps", "aspnet", "sdk", "monitor", "aspire-dashboard"),
 
-    [securestring]$SasQueryString,
-    
-    [securestring]$NuGetFeedPassword
+    [string]$CustomTestFilter,
+
+    [string]$InternalAccessToken
 )
+
+Import-Module -force $PSScriptRoot/../eng/DependencyManagement.psm1
 
 function Log {
     param ([string] $Message)
@@ -109,21 +113,19 @@ Try {
     $env:IMAGE_ARCH = $Architecture
     $env:IMAGE_OS_NAMES = $($OSVersions -Join ",")
     $env:REGISTRY = $Registry
+    $env:CACHE_REGISTRY = $CacheRegistry
     $env:REPO_PREFIX = $RepoPrefix
     $env:IMAGE_INFO_PATH = $ImageInfoPath
     $env:SOURCE_REPO_ROOT = (Get-Item "$PSScriptRoot").Parent.FullName
-    $env:SOURCE_BRANCH = & $PSScriptRoot/../eng/Get-Branch.ps1
+    $env:SOURCE_BRANCH = Get-Branch
 
     $env:DOTNET_CLI_TELEMETRY_OPTOUT = 1
     $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = 1
     $env:DOTNET_MULTILEVEL_LOOKUP = '0'
 
-    if ($SasQueryString) {
-        $env:SAS_QUERY_STRING = ConvertFrom-SecureString $SasQueryString -AsPlainText
-    }
-    
-    if ($NuGetFeedPassword) {
-        $env:NUGET_FEED_PASSWORD = ConvertFrom-SecureString $NuGetFeedPassword -AsPlainText
+    if ($InternalAccessToken) {
+        $env:INTERNAL_ACCESS_TOKEN = $InternalAccessToken
+        $env:INTERNAL_TESTING = 1
     }
 
     $testFilter = ""
@@ -131,27 +133,27 @@ Try {
         # Construct an expression that filters the test to each of the
         # selected TestCategories (using an OR operator between each category).
         # See https://docs.microsoft.com/en-us/dotnet/core/testing/selective-unit-tests
-        $TestCategories | foreach {
-            # Skip pre-build tests on Windows because of missing pre-reqs (https://github.com/dotnet/dotnet-docker/issues/2261)
-            if ($_ -eq "pre-build" -and $activeOS -eq "windows") {
-                Write-Warning "Skipping pre-build tests for Windows containers"
+        $TestCategories | ForEach-Object {
+            if ($testFilter) {
+                $testFilter += "|"
             }
-            else {
-                if ($testFilter) {
-                    $testFilter += "|"
-                }
 
-                $testFilter += "Category=$_"
-            }
+            $testFilter += "Category=$_"
         }
 
         if (-not $testFilter) {
             exit;
         }
 
-        $testFilter = "--filter `"$testFilter`""
+        if ($CustomTestFilter)
+        {
+            $testFilter = "$CustomTestFilter&($testFilter)"
+        }
+
+        $testFilter = "--filter '$testFilter'"
     }
 
+    Write-Host "`nRunning tests with $testFilter`n"
     Exec "$DotnetInstallDir/dotnet test $testFilter --logger:trx"
 
     if ($TestCategories.Contains('image-size')) {

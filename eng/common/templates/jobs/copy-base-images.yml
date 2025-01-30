@@ -1,19 +1,39 @@
 parameters:
-  name: null
-  pool: {}
-  additionalOptions: null
-  publicProjectName: null
-  customInitSteps: []
-  
+- name: name
+  type: string
+  default: null
+- name: pool
+  type: object
+  default: {}
+- name: acr
+  type: object
+  default: null
+- name: repoPrefix
+  type: string
+  default: null
+- name: customInitSteps
+  type: stepList
+  default: []
+- name: additionalOptions
+  type: string
+  default: ''
+- name: continueOnError
+  type: string
+  default: false
+- name: forceDryRun
+  type: boolean
+  default: false
+
 jobs:
 - job: ${{ parameters.name }}
   pool: ${{ parameters.pool }}
   steps:
-  - template: ../steps/init-docker-linux.yml
+  - template: /eng/common/templates/steps/init-docker-linux.yml@self
   - ${{ parameters.customInitSteps }}
-  - template: ../steps/copy-base-images.yml
+  - template: /eng/common/templates/steps/copy-base-images.yml@self
     parameters:
+      acr: ${{ parameters.acr }} 
+      repoPrefix: ${{ parameters.repoPrefix }}
       additionalOptions: ${{ parameters.additionalOptions }}
-      publicProjectName: ${{ parameters.publicProjectName }}
-      continueOnError: true
-  - template: ../steps/cleanup-docker-linux.yml
+      continueOnError: ${{ parameters.continueOnError }}
+      forceDryRun: ${{ parameters.forceDryRun }}

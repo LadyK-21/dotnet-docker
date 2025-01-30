@@ -4,56 +4,65 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using Microsoft.DotNet.VersionTools.Dependencies;
-using Newtonsoft.Json.Linq;
+using Octokit;
 
-#nullable enable
 namespace Dotnet.Docker;
 
-internal abstract class MinGitUpdater : FileRegexUpdater
+internal static partial class MinGitUpdater
 {
-    private readonly Lazy<JObject> _manifestVariables;
-    private readonly string _variableName;
+    public const string ToolName = "mingit";
 
-    public MinGitUpdater(string repoRoot, JObject latestMinGitRelease, string variableName)
+    private const string Owner = "git-for-windows";
+
+    private const string Repo = "git";
+
+    public static IEnumerable<IDependencyUpdater> GetUpdaters(string repoRoot) =>
+    [
+        new GitHubReleaseUrlUpdater(
+            repoRoot: repoRoot,
+            toolName: ToolName,
+            variableName: GetManifestVariableName("url"),
+            owner: Owner,
+            repo: Repo,
+            assetRegex: UrlRegex),
+        new MinGitShaUpdater(repoRoot)
+    ];
+
+    public static async Task<GitHubReleaseInfo> GetBuildInfoAsync()
     {
-        _variableName = variableName;
-        Path = System.IO.Path.Combine(repoRoot, UpdateDependencies.VersionsFilename);
-        VersionGroupName = "val";
-        Regex = ManifestHelper.GetManifestVariableRegex(variableName, @$"(?<{VersionGroupName}>\S*)");
-        LatestMinGitRelease = latestMinGitRelease;
-
-        _manifestVariables = new Lazy<JObject>(
-            () =>
-            {
-                const string VariablesProperty = "variables";
-                JToken? variables = ManifestHelper.LoadManifest(UpdateDependencies.VersionsFilename)[VariablesProperty];
-                if (variables is null)
-                {
-                    throw new InvalidOperationException($"'{VariablesProperty}' property missing in '{UpdateDependencies.VersionsFilename}'");
-                }
-                return (JObject)variables;
-            });
+        Release minGitRelease = await GitHubHelper.GetLatestRelease(Owner, Repo);
+        return new GitHubReleaseInfo(ToolName, minGitRelease);
     }
 
-    protected JObject LatestMinGitRelease { get; }
+    [GeneratedRegex(@"^MinGit.*64-bit.*\.zip$")]
+    private static partial Regex UrlRegex { get; }
 
-    protected sealed override string TryGetDesiredValue(IEnumerable<IDependencyInfo> dependencyInfos, out IEnumerable<IDependencyInfo> usedDependencyInfos)
+    private static string GetManifestVariableName(string type) => "mingit|latest|x64|" + type;
+
+    private class MinGitShaUpdater(string repoRoot)
+        : GitHubReleaseUpdaterBase(
+            repoRoot,
+            MinGitUpdater.ToolName,
+            GetManifestVariableName("sha"),
+            MinGitUpdater.Owner,
+            MinGitUpdater.Repo)
     {
-        IDependencyInfo? sdkDependencyInfo = dependencyInfos.FirstOrDefault(info => info.SimpleName == "sdk");
-
-        // Only update MinGit variables when we're updating the SDK Dockerfiles
-        if (sdkDependencyInfo is null)
+        protected override string? GetValue(GitHubReleaseInfo dependencyInfo)
         {
-            usedDependencyInfos = Enumerable.Empty<IDependencyInfo>();
-            return ManifestHelper.GetVariableValue(_variableName, _manifestVariables.Value);
+            ReleaseAsset asset = dependencyInfo.Release.Assets
+                .First(asset => UrlRegex.IsMatch(asset.Name))
+                    ?? throw new Exception(
+                        $"Could not find release asset for {GetManifestVariableName("sha")} matching regex {UrlRegex}");
+
+            string body = dependencyInfo.Release.Body;
+            const string ShaGroupName = "sha";
+            Regex shaRegex = new(@$"{Regex.Escape(asset.Name)}\s\|\s(?<{ShaGroupName}>[0-9|a-f]+)");
+            string sha = shaRegex.Match(body).Groups[ShaGroupName].Value;
+            return sha;
         }
-
-        usedDependencyInfos = new[] { sdkDependencyInfo };
-        return GetValue();
     }
-
-    protected abstract string GetValue();
 
 }
-#nullable disable

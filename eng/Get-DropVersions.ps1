@@ -11,6 +11,11 @@ param(
     [string]
     $Channel,
 
+    # The pipeline run ID of the .NET release staging build.
+    [Parameter(ParameterSetName = "BuildId")]
+    [string]
+    $BuildId,
+
     [Parameter(ParameterSetName = "Explicit")]
     # SDK versions to target
     [string[]]
@@ -20,33 +25,76 @@ param(
     [switch]
     $UseInternalBuild,
 
-    # SAS query string used to access the internal blob storage location of the build
-    [string]
-    $BlobStorageSasQueryString,
+    # Whether to call Set-DotnetVersions with the new versions
+    [switch]
+    $UpdateDependencies,
 
     # PAT used to access the versions repo in AzDO
     [string]
-    $AzdoVersionsRepoInfoAccessToken
+    $AzdoVersionsRepoInfoAccessToken,
+
+    # PAT used to access internal AzDO build artifacts
+    [string]
+    $InternalAccessToken
 )
 
-function GetLatestSdkVersionFromChannel([string]$queryString) {
-    $sdkFile = "dotnet-sdk-win-x64.zip"
-    $akaMsUrl = "https://aka.ms/dotnet/$Channel/$sdkFile$queryString"
-    Write-Host "Querying $akaMsUrl"
-    $response = Invoke-WebRequest -Uri $akaMsUrl -Method Head
-    $sdkUrl = $response.BaseResponse.RequestMessage.RequestUri.AbsoluteUri
-    Write-Host "Resolved SDK URL: $sdkUrl"
+Import-Module -force $PSScriptRoot/DependencyManagement.psm1
 
-    # Resolve the SDK build version from the SDK URL
-    # Example URL: https://dotnetcli.azureedge.net/dotnet/Sdk/6.0.100-rtm.21522.1/dotnet-sdk-6.0.100-win-x64.zip
-    #   The command below extracts the 6.0.100-rtm.21522.1 from the URL
-    $sdkUrlPath = "/Sdk/"
-    $versionUrlPath = $sdkUrl.Substring($sdkUrl.IndexOf($sdkUrlPath) + $sdkUrlPath.Length)
-    $sdkVersion = $versionUrlPath.Substring(0, $versionUrlPath.IndexOf("/"))
-    return $sdkVersion
+function GetSdkVersionInfo([string]$sdkUrl) {
+    New-Item -Path $tempDir -ItemType Directory -Force | Out-Null
+
+    try {
+        # Download the SDK
+        Write-Host "Downloading SDK from $sdkUrl"
+        $sdkOutPath = "$tempDir/sdk.zip"
+        Invoke-WebRequest -Uri $sdkUrl -OutFile $sdkOutPath
+
+        # Extract .version file from SDK zip
+        $zipFile = [IO.Compression.ZipFile]::OpenRead($sdkOutPath)
+        try {
+            $zipFile.Entries | Where-Object { $_.FullName -like "sdk/*/.version" } | ForEach-Object {
+                [IO.Compression.ZipFileExtensions]::ExtractToFile($_, "$tempDir/$($_.Name)")
+            }
+        }
+        finally {
+            $zipFile.Dispose()
+        }
+
+        # Get the commit SHA from the .version file. Example contents:
+        #
+        # Unstable version:
+        # f54f69f9aade0a00936aca343c3eb493d5edbc05
+        # 8.0.100-rtm.23512.13
+        # win-x64
+        # 8.0.100-rtm.23512.13
+        #
+        # Stable version:
+        # eb26aacfecb08dd87b418f4cfaf7faa10eb1900f
+        # 7.0.401
+        # win-x64
+        # 7.0.401-servicing.23425.30
+        #
+        $versionInfoText = $(Get-Content "$tempDir/.version")
+
+        $commitSha = $versionInfoText[0].Trim()
+        $shortVersion = $versionInfoText[1].Trim()
+        $rid = $versionInfoText[2].Trim()
+        $fullVersion = $versionInfoText[3].Trim()
+        $isStableVersion = $fullVersion -ne $shortVersion
+
+        return [PSCustomObject]@{
+            CommitSha = $commitSha
+            Version = $fullVersion
+            IsStableVersion = $isStableVersion
+            Rid = $rid
+        }
+    }
+    finally {
+        Remove-Item $tempDir -Force -Recurse -ErrorAction Ignore
+    }
 }
 
-function GetCommitSha([string]$sdkVersion, [string]$queryString, [switch]$useStableBranding) {
+function ResolveSdkUrl([string]$sdkVersion, [bool]$useStableBranding) {
     if ($useStableBranding) {
         $sdkStableVersion = ($sdkVersion -split "-")[0]
     }
@@ -59,47 +107,35 @@ function GetCommitSha([string]$sdkVersion, [string]$queryString, [switch]$useSta
     $containerVersion = $sdkVersion.Replace(".", "-")
 
     if ($UseInternalBuild) {
-        $sdkUrl = "https://dotnetstage.blob.core.windows.net/$containerVersion-internal/Sdk/$sdkVersion/$zipFile$queryString"
+        $sdkUrl = "https://dotnetstage.blob.core.windows.net/$containerVersion-internal/Sdk/$sdkVersion/$zipFile"
     }
     else {
         $sdkUrl = "https://dotnetbuilds.blob.core.windows.net/public/Sdk/$sdkVersion/$zipFile"
     }
-
-    # Download the SDK
-    Write-Host "Downloading SDK from $sdkUrl"
-    $sdkOutPath = "$tempDir/sdk.zip"
-    Invoke-WebRequest -Uri $sdkUrl -OutFile $sdkOutPath
-    
-    # Extract .version file from SDK zip
-    $zipFile = [IO.Compression.ZipFile]::OpenRead($sdkOutPath)
-    try {
-        $zipFile.Entries | Where-Object { $_.FullName -like "sdk/*/.version" } | ForEach-Object {
-            [IO.Compression.ZipFileExtensions]::ExtractToFile($_, "$tempDir/$($_.Name)")
-        }
-    }
-    finally {
-        $zipFile.Dispose()
-    }
-
-    # Get the commit SHA from the .version file
-    $commitSha = $(Get-Content "$tempDir/.version")[0].Trim()
-
-    return $commitSha
+    return $sdkUrl
 }
 
-function GetVersionDetails([string]$commitSha) {
+function GetVersionDetails([string]$commitSha, [string]$dockerfileVersion) {
     $versionDetailsPath="eng/Version.Details.xml"
-    
+
+    if (([Version]$dockerfileVersion).Major -le 8) {
+        $repoName = "installer"
+        $repoId = "c20f712b-f093-40de-9013-d6b084c1ff30"
+    }
+    else {
+        $repoName = "sdk"
+        $repoId = "7fa5dddb-89e8-4b26-8595-a6d15593e354"
+    }
+
     if ($UseInternalBuild) {
-        $dotnetInstallerRepoId="c20f712b-f093-40de-9013-d6b084c1ff30"
-        $versionDetailsUrl="https://dev.azure.com/dnceng/internal/_apis/git/repositories/$dotnetInstallerRepoId/items?scopePath=/$versionDetailsPath&api-version=6.0&version=$commitSha&versionType=commit"
+        $versionDetailsUrl="https://dev.azure.com/dnceng/internal/_apis/git/repositories/$repoId/items?scopePath=/$versionDetailsPath&api-version=6.0&version=$commitSha&versionType=commit"
         $base64AccessToken = [System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes(":$AzdoVersionsRepoInfoAccessToken"))
         $headers = @{
             "Authorization" = "Basic $base64AccessToken"
         }
     }
     else {
-        $versionDetailsUrl="https://raw.githubusercontent.com/dotnet/installer/$commitSha/$versionDetailsPath"
+        $versionDetailsUrl="https://raw.githubusercontent.com/dotnet/$repoName/$commitSha/$versionDetailsPath"
         $headers = @{}
     }
 
@@ -113,72 +149,204 @@ function GetDependencyVersion([string]$dependencyName, [xml]$versionDetails) {
     return $result.Node.Value
 }
 
+function GetVersionInfoFromBuildId([string]$buildId) {
+    $configFilename = "config.json"
+    $configPath = Join-Path $tempDir $configFilename
+
+    try {
+        New-Item -Path $tempDir -ItemType Directory -Force | Out-Null
+
+        $base64AccessToken = [System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes(":$InternalAccessToken"))
+        $headers = @{
+            "Authorization" = "Basic $base64AccessToken"
+        }
+
+        $url = GetArtifactUrl 'drop'
+        $url = $url.Replace("content?format=zip", "content?format=file&subPath=%2F$configFilename")
+
+        Invoke-WebRequest -OutFile $configPath $url -Headers $headers
+
+        $config = $(Get-Content -Path $configPath | Out-String) | ConvertFrom-Json
+
+        $isStableVersion = Get-IsStableBranding -Version $config.Sdk_Builds[0]
+
+        if ($UseInternalBuild) {
+            return [PSCustomObject]@{
+                DockerfileVersion = $config.Channel
+                SdkVersion = @($config.Sdk_Builds | Sort-Object -Descending)[0]
+                RuntimeVersion = $config.Runtime_Build
+                AspnetVersion = $config.Asp_Build
+                StableBranding = $isStableVersion
+            }
+        } else {
+            return [PSCustomObject]@{
+                DockerfileVersion = $config.Channel
+                SdkVersion = @($config.Sdks | Sort-Object -Descending)[0]
+                RuntimeVersion = $config.Runtime
+                AspnetVersion = $config.Asp
+                StableBranding = $isStableVersion
+            }
+        }
+    }
+    catch [System.Management.Automation.CommandNotFoundException] {
+        Write-Error "Azure CLI is not installed. Please visit https://learn.microsoft.com/cli/azure/install-azure-cli."
+        Write-Host "Original Exception: $_"
+        exit 1
+    }
+    finally {
+        Remove-Item -Force $configPath
+    }
+}
+
+function GetArtifactUrl([string]$artifactName) {
+    $base64AccessToken = [System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes(":$InternalAccessToken"))
+    $headers = @{
+        "Authorization" = "Basic $base64AccessToken"
+    }
+
+    $artifactsUrl = "https://dev.azure.com/dnceng/internal/_apis/build/builds/$BuildId/artifacts?api-version=6.0"
+    $response = Invoke-RestMethod -Uri $artifactsUrl -Method Get -Headers $headers
+
+    $url = $null
+    foreach ($artifact in $response.value) {
+        if ($artifact.name -eq $artifactName) {
+            $url = $artifact.resource.downloadUrl
+            break
+        }
+    }
+
+    if ($url -eq $null) {
+        Write-Error "Artifact '$artifactName' was not found in build# $BuildId"
+        exit 1
+    }
+
+    return $url
+}
+
+function GetInternalBaseUrl() {
+    $shippingUrl = GetArtifactUrl 'shipping'
+
+    # Format artifact URL into base-url
+    return $shippingUrl.Replace("content?format=zip", "content?format=file&subPath=%2Fassets")
+}
+
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 Set-StrictMode -Version 2.0
 
-$tempDir = "$([System.IO.Path]::GetTempPath())/dotnet-docker-get-dropversions"
+$tempDir = Join-Path ([System.IO.Path]::GetTempPath()) -ChildPath "dotnet-docker-get-dropversions" | Join-Path -ChildPath ([System.Guid]::NewGuid())
+
+if ($BuildId) {
+    if (!$InternalAccessToken) {
+        $InternalAccessToken = az account get-access-token --query accessToken --output tsv
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Failed to obtain access token using Azure CLI"
+            Write-Error "Please provide 'InternalAccessToken' parameter when using 'BuildId' option"
+            exit 1
+        }
+    }
+}
 
 if ($UseInternalBuild) {
     if ($Channel)
     {
         $Channel = "internal/$Channel"
     }
-    
-    $queryString = "$BlobStorageSasQueryString"
+
+    if ($BuildId) {
+        $internalBaseUrl = GetInternalBaseUrl
+    }
 }
-else {
-    $queryString = ""
-}
+
+$sdkVersionInfos = @()
 
 if ($Channel) {
-    $SdkVersions += GetLatestSdkVersionFromChannel $queryString
+    $sdkFile = "dotnet-sdk-win-x64.zip"
+    $akaMsUrl = "https://aka.ms/dotnet/$Channel/$sdkFile"
+
+    $sdkUrl = Resolve-DotnetProductUrl $akaMsUrl
+    $sdkVersionInfos += GetSdkVersionInfo $sdkUrl
 }
 
-Write-Host "Resolved SDK versions: $SdkVersions"
+foreach ($sdkVersion in $SdkVersions)
+{
+    $useStableBranding = Get-IsStableBranding -Version $sdkVersion
+    $sdkUrl = ResolveSdkUrl $sdkVersion $useStableBranding
+    $sdkVersionInfo = GetSdkVersionInfo $sdkUrl
+    $sdkVersionInfos += $sdkVersionInfo
+}
+
 $versionInfos = @()
-foreach ($sdkVersion in $SdkVersions) {
-    New-Item -Path $tempDir -ItemType Directory -Force | Out-Null
+if ($BuildId) {
+    $versionInfos += GetVersionInfoFromBuildId($BuildId)
+}
 
-    try {
-        $useStableBranding = & $PSScriptRoot/Get-IsStableBranding.ps1 -Version $sdkVersion
-        $commitSha = GetCommitSha $sdkVersion $queryString -useStableBranding:$useStableBranding
-        $versionDetails = GetVersionDetails $commitSha
+foreach ($sdkVersionInfo in $SdkVersionInfos) {
+    $sdkVersionParts = $sdkVersionInfo.Version -split "\."
+    $dockerfileVersion = "$($sdkVersionParts[0]).$($sdkVersionParts[1])"
 
-        $runtimeVersion = GetDependencyVersion "VS.Redist.Common.NetCore.SharedFramework.x64" $versionDetails
+    $versionDetails = GetVersionDetails $sdkVersionInfo.CommitSha $dockerfileVersion
 
-        $aspnetVersion = GetDependencyVersion "VS.Redist.Common.AspNetCore.SharedFramework.x64" $versionDetails
+    $runtimeVersion = GetDependencyVersion "VS.Redist.Common.NetCore.SharedFramework.x64" $versionDetails
 
-        if (-not $runtimeVersion) {
-            Write-Error "Unable to resolve the runtime version"
-            exit 1
-        }
+    $aspnetVersion = GetDependencyVersion "VS.Redist.Common.AspNetCore.SharedFramework.x64" $versionDetails
 
-        if (-not $aspnetVersion) {
-            Write-Error "Unable to resolve the ASP.NET Core runtime version"
-            exit 1
-        }
+    if (-not $runtimeVersion) {
+        Write-Error "Unable to resolve the runtime version"
+        exit 1
+    }
 
-        $sdkVersionParts = $sdkVersion -split "\."
-        $dockerfileVersion = "$($sdkVersionParts[0]).$($sdkVersionParts[1])"
+    if (-not $aspnetVersion) {
+        Write-Error "Unable to resolve the ASP.NET Core runtime version"
+        exit 1
+    }
 
-        Write-Host "Dockerfile version: $dockerfileVersion"
-        Write-Host "SDK version: $sdkVersion"
-        Write-Host "Runtime version: $runtimeVersion"
-        Write-Host "ASP.NET Core version: $aspnetVersion"
+    Write-Host "Dockerfile version: $dockerfileVersion"
+    Write-Host "SDK version: $($sdkVersionInfo.Version)"
+    Write-Host "Runtime version: $runtimeVersion"
+    Write-Host "ASP.NET Core version: $aspnetVersion"
+    Write-Host
+
+    $versionInfos += @{
+        DockerfileVersion = $dockerfileVersion
+        SdkVersion = $sdkVersionInfo.Version
+        RuntimeVersion = $runtimeVersion
+        AspnetVersion = $aspnetVersion
+        StableBranding = $sdkVersionInfo.IsStableVersion
+    }
+}
+
+if ($UpdateDependencies)
+{
+    $additionalArgs = @{}
+
+    if ($UseInternalBuild) {
+        $additionalArgs += @{ InternalBaseUrl = "$internalBaseUrl" }
+        $additionalArgs += @{ InternalAccessToken = "$InternalAccessToken" }
+    }
+
+    foreach ($versionInfo in $versionInfos) {
+        Write-Host "Dockerfile version: $($versionInfo.DockerfileVersion)"
+        Write-Host "SDK version: $($versionInfo.SdkVersion)"
+        Write-Host "Runtime version: $($versionInfo.RuntimeVersion)"
+        Write-Host "ASP.NET Core version: $($versionInfo.AspnetVersion)"
         Write-Host
 
-        $versionInfos += @{
-            DockerfileVersion = $dockerfileVersion
-            SdkVersion = $sdkVersion
-            RuntimeVersion = $runtimeVersion
-            AspnetVersion = $aspnetVersion
-            StableBranding = $useStableBranding
+        if ($versionInfo.StableBranding) {
+            $additionalArgs += @{ UseStableBranding = $versionInfo.StableBranding }
         }
-    }
-    finally {
-        Remove-Item $tempDir -Force -Recurse -ErrorAction Ignore
-    }
-}
 
-Write-Output "##vso[task.setvariable variable=versionInfos]$($versionInfos | ConvertTo-Json -Compress -AsArray)"
+        $setVersionsScript = Join-Path $PSScriptRoot "Set-DotnetVersions.ps1"
+        & $setVersionsScript `
+            -ProductVersion $versionInfo.DockerfileVersion `
+            -RuntimeVersion $versionInfo.RuntimeVersion `
+            -AspnetVersion $versionInfo.AspnetVersion `
+            -SdkVersion $versionInfo.SdkVersion `
+            @additionalArgs
+
+        Write-Host "`r`nDone: Updates for .NET $($versionInfo.RuntimeVersion)/$($versionInfo.SdkVersion)`r`n"
+    }
+} else {
+    Write-Output "##vso[task.setvariable variable=versionInfos]$($versionInfos | ConvertTo-Json -Compress -AsArray)"
+    Write-Output "##vso[task.setvariable variable=internalBaseUrl]$internalBaseUrl"
+}

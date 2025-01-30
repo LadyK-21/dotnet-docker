@@ -15,10 +15,6 @@ using Microsoft.DotNet.VersionTools.Automation;
 using Microsoft.DotNet.VersionTools.Automation.GitHubApi;
 using Microsoft.DotNet.VersionTools.Dependencies;
 using Microsoft.DotNet.VersionTools.Dependencies.BuildOutput;
-using Microsoft.TeamFoundation.SourceControl.WebApi;
-using Microsoft.VisualStudio.Services.Common;
-using Microsoft.VisualStudio.Services.WebApi;
-using Newtonsoft.Json.Linq;
 
 namespace Dotnet.Docker
 {
@@ -27,27 +23,27 @@ namespace Dotnet.Docker
         public const string ManifestFilename = "manifest.json";
         public const string VersionsFilename = "manifest.versions.json";
 
-        private static Options Options { get; set; }
+        private static Options? s_options;
+
+        private static Options Options {
+            get => s_options ?? throw new InvalidOperationException($"{nameof(Options)} has not been set.");
+            set => s_options = value;
+        }
+
         public static string RepoRoot { get; } = Directory.GetCurrentDirectory();
 
         public static Task Main(string[] args)
         {
-            RootCommand command = new RootCommand();
-            foreach (Symbol option in Options.GetCliSymbols())
-            {
-                command.Add(option);
-            };
-
+            RootCommand command = [.. Options.GetCliSymbols()];
             command.Handler = CommandHandler.Create<Options>(ExecuteAsync);
-
             return command.InvokeAsync(args);
         }
 
         internal static string ResolveProductVersion(string version, Options options)
         {
-            if (version is not null && options.UseStableBranding)
+            if (!string.IsNullOrEmpty(version) && options.UseStableBranding)
             {
-                int monikerSeparatorIndex = version.IndexOf("-");
+                int monikerSeparatorIndex = version.IndexOf('-');
                 if (monikerSeparatorIndex >= 0)
                 {
                     return version.Substring(0, monikerSeparatorIndex);
@@ -63,14 +59,35 @@ namespace Dotnet.Docker
 
             try
             {
-                ErrorTraceListener errorTraceListener = new ErrorTraceListener();
+                ErrorTraceListener errorTraceListener = new();
                 Trace.Listeners.Add(errorTraceListener);
                 Trace.Listeners.Add(new TextWriterTraceListener(Console.Out));
 
-                IEnumerable<IDependencyInfo> buildInfos = Options.ProductVersions
+                IDependencyInfo[] productBuildInfos = Options.ProductVersions
                     .Select(kvp => CreateDependencyBuildInfo(kvp.Key, kvp.Value))
                     .ToArray();
-                DependencyUpdateResults updateResults = await UpdateFilesAsync(buildInfos);
+                IDependencyInfo[] toolBuildInfos =
+                    await Task.WhenAll(Options.Tools.Select(Tools.GetToolBuildInfoAsync));
+
+                List<DependencyUpdateResults> updateResults = [];
+
+                if (productBuildInfos.Length != 0)
+                {
+                    IEnumerable<IDependencyUpdater> productUpdaters = GetProductUpdaters();
+                    DependencyUpdateResults productUpdateResults = UpdateFiles(productBuildInfos, productUpdaters);
+                    updateResults.Add(productUpdateResults);
+                }
+
+                if (toolBuildInfos.Length != 0)
+                {
+                    IEnumerable<IDependencyUpdater> toolUpdaters = Tools.GetToolUpdaters(RepoRoot);
+                    DependencyUpdateResults toolUpdateResults = UpdateFiles(toolBuildInfos, toolUpdaters);
+                    updateResults.Add(toolUpdateResults);
+                }
+
+                IEnumerable<IDependencyUpdater> generatedContentUpdaters = GetGeneratedContentUpdaters();
+                IEnumerable<IDependencyInfo> allBuildInfos = [..productBuildInfos, ..toolBuildInfos];
+                UpdateFiles(allBuildInfos, generatedContentUpdaters);
 
                 if (errorTraceListener.Errors.Any())
                 {
@@ -82,7 +99,7 @@ namespace Dotnet.Docker
                     Environment.Exit(1);
                 }
 
-                if (updateResults.ChangesDetected())
+                if (updateResults.Any(result => result.ChangesDetected()))
                 {
                     if (Options.UpdateOnly)
                     {
@@ -103,14 +120,16 @@ namespace Dotnet.Docker
             Environment.Exit(0);
         }
 
-        private static async Task<DependencyUpdateResults> UpdateFilesAsync(IEnumerable<IDependencyInfo> buildInfos)
+        private static DependencyUpdateResults UpdateFiles(
+            IEnumerable<IDependencyInfo> buildInfos,
+            IEnumerable<IDependencyUpdater> updaters)
         {
-            IEnumerable<IDependencyUpdater> updaters = await GetUpdatersAsync();
-
-            return DependencyUpdateUtils.Update(updaters, buildInfos);
+            DependencyUpdateResults results = DependencyUpdateUtils.Update(updaters, buildInfos);
+            Console.WriteLine(results.GetSuggestedCommitMessage());
+            return results;
         }
 
-        private static IDependencyInfo CreateDependencyBuildInfo(string name, string version)
+        private static IDependencyInfo CreateDependencyBuildInfo(string name, string? version)
         {
             return new BuildDependencyInfo(
                 new BuildInfo()
@@ -130,7 +149,10 @@ namespace Dotnet.Docker
         {
             string commitMessage = $"[{Options.TargetBranch}] Update dependencies from {Options.VersionSourceName}";
 
-            string branchSuffix = FormatBranchName($"UpdateDependencies-{Options.TargetBranch}-From-{Options.VersionSourceName}");
+            string branchSuffix = Options.IsInternal
+                ? Options.TargetBranch
+                : FormatBranchName($"UpdateDependencies-{Options.TargetBranch}-From-{Options.VersionSourceName}");
+
             PullRequestOptions prOptions = new()
             {
                 BranchNamingStrategy = new SingleBranchNamingStrategy(branchSuffix)
@@ -138,7 +160,7 @@ namespace Dotnet.Docker
 
             if (Options.IsInternal)
             {
-                await CreateAzdoPullRequest(commitMessage, prOptions);
+                PushToAzdoBranch(commitMessage, prOptions);
             }
             else
             {
@@ -146,7 +168,7 @@ namespace Dotnet.Docker
             }
         }
 
-        private static async Task CreateAzdoPullRequest(string commitMessage, PullRequestOptions prOptions)
+        private static void PushToAzdoBranch(string commitMessage, PullRequestOptions prOptions)
         {
             using Repository repo = new(RepoRoot);
 
@@ -176,50 +198,13 @@ namespace Dotnet.Docker
             {
                 // Push the commit to AzDO
                 string username = Options.Email.Substring(0, Options.Email.IndexOf('@'));
-                string remoteBranch = prOptions.BranchNamingStrategy.Prefix($"users/{username}/{FormatBranchName(Options.TargetBranch)}");
+                string remoteBranch = prOptions.BranchNamingStrategy.Prefix($"testing/{Options.DockerfileVersion}-internal");
                 string pushRefSpec = $@"refs/heads/{remoteBranch}";
 
                 Trace.WriteLine($"Pushing to {remoteBranch}");
 
                 // Force push
                 repo.Network.Push(remote, "+HEAD", pushRefSpec, pushOptions);
-
-                using VssConnection connection = new(
-                    new Uri($"https://dev.azure.com/{Options.AzdoOrganization}"),
-                    new VssBasicCredential(string.Empty, Options.Password));
-
-                GitHttpClient client = connection.GetClient<GitHttpClient>();
-
-                string targetBranch = $"refs/heads/{Options.TargetBranch}";
-                List<GitPullRequest> activePrs = await client.GetPullRequestsByProjectAsync(
-                    Options.AzdoProject,
-                    new GitPullRequestSearchCriteria
-                    {
-                        TargetRefName = targetBranch,
-                        Status = PullRequestStatus.Active
-                    });
-
-                string prTitle = commitMessage;
-
-                GitPullRequest existingPr = activePrs
-                    .FirstOrDefault(pr => pr.Repository.Name == Options.AzdoRepo && pr.Title == prTitle);
-                if (existingPr is null)
-                {
-                    // Create the pull request
-                    GitPullRequest pullRequest = new()
-                    {
-                        Title = prTitle,
-                        SourceRefName = pushRefSpec,
-                        TargetRefName = targetBranch
-                    };
-
-                    GitPullRequest pr = await client.CreatePullRequestAsync(pullRequest, Options.AzdoProject, Options.AzdoRepo);
-                    Trace.WriteLine($"Created pull request: {GetGitPullRequestWebLink(pr)}");
-                }
-                else
-                {
-                    Trace.WriteLine($"Updated existing PR: {GetGitPullRequestWebLink(existingPr)}");
-                }
             }
             finally
             {
@@ -227,10 +212,6 @@ namespace Dotnet.Docker
                 repo.Network.Remotes.Remove(remote.Name);
             }
         }
-
-        // Normally the web link would be available within GitPullRequest.Links property but that's not populated 
-        private static string GetGitPullRequestWebLink(GitPullRequest pr) =>
-            $"https://dev.azure.com/{Options.AzdoOrganization}/{Options.AzdoProject}/_git/{Options.AzdoRepo}/pullrequest/{pr.PullRequestId}";
 
         private static string GetUniqueName(IEnumerable<string> existingNames, string suggestedName, int? index = null)
         {
@@ -245,13 +226,13 @@ namespace Dotnet.Docker
 
         private static async Task CreateGitHubPullRequest(string commitMessage, PullRequestOptions prOptions, string branchSuffix)
         {
-            GitHubAuth gitHubAuth = new GitHubAuth(Options.Password, Options.User, Options.Email);
-            PullRequestCreator prCreator = new PullRequestCreator(gitHubAuth, Options.User);
-            
-            GitHubProject upstreamProject = new GitHubProject(Options.GitHubProject, Options.GitHubUpstreamOwner);
-            GitHubBranch upstreamBranch = new GitHubBranch(Options.TargetBranch, upstreamProject);
+            GitHubAuth gitHubAuth = new(Options.Password, Options.User, Options.Email);
+            PullRequestCreator prCreator = new(gitHubAuth, Options.User);
 
-            using (GitHubClient client = new GitHubClient(gitHubAuth))
+            GitHubProject upstreamProject = new(Options.GitHubProject, Options.GitHubUpstreamOwner);
+            GitHubBranch upstreamBranch = new(Options.TargetBranch, upstreamProject);
+
+            using (GitHubClient client = new(gitHubAuth))
             {
                 GitHubPullRequest pullRequestToUpdate = await client.SearchPullRequestsAsync(
                     upstreamProject,
@@ -260,6 +241,7 @@ namespace Dotnet.Docker
 
                 if (pullRequestToUpdate == null || pullRequestToUpdate.Head.Ref != $"{upstreamBranch.Name}-{branchSuffix}")
                 {
+                    Trace.WriteLine("Didn't find a PR to update. Submitting a new one.");
                     await prCreator.CreateOrUpdateAsync(
                         commitMessage,
                         commitMessage,
@@ -286,15 +268,17 @@ namespace Dotnet.Docker
             // implement logic which pulls down each file individually from the API and compare it to what exists
             // in the local repo.  Since that's not an efficient process, this method works by cloning the PR's
             // branch to a temporary repo location, grabbing the whole repo where the original updates from
-            // update-dependencies were made and copying it into the temp repo, and committing and pushing 
+            // update-dependencies were made and copying it into the temp repo, and committing and pushing
             // those changes in the temp repo back to the PR's branch.
+
+            Trace.WriteLine($"Updating existing pull request for branch {upstreamBranch.Name}.");
 
             string tempRepoPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
 
             try
             {
                 string branchName = prOptions.BranchNamingStrategy.Prefix(upstreamBranch.Name);
-                CloneOptions cloneOptions = new CloneOptions
+                CloneOptions cloneOptions = new()
                 {
                     BranchName = branchName
                 };
@@ -308,20 +292,22 @@ namespace Dotnet.Docker
                 // Copy contents of local repo changes to temp repo
                 DirectoryCopy(".", tempRepoPath);
 
-                using Repository repo = new Repository(tempRepoPath);
+                using Repository repo = new(tempRepoPath);
                 RepositoryStatus status = repo.RetrieveStatus(new StatusOptions());
 
                 // If there are any changes from what exists in the PR
                 if (status.IsDirty)
                 {
+                    Trace.WriteLine($"Detected changes that don't currently exist in the PR.");
+
                     Commands.Stage(repo, "*");
 
-                    Signature signature = new Signature(Options.User, Options.Email, DateTimeOffset.Now);
+                    Signature signature = new(Options.User, Options.Email, DateTimeOffset.Now);
                     repo.Commit(commitMessage, signature, signature);
 
                     Branch branch = repo.Branches[$"origin/{branchName}"];
 
-                    PushOptions pushOptions = new PushOptions
+                    PushOptions pushOptions = new()
                     {
                         CredentialsProvider = (url, user, credTypes) => new UsernamePasswordCredentials
                         {
@@ -334,6 +320,10 @@ namespace Dotnet.Docker
                     string pushRefSpec = $@"refs/heads/{branchName}";
 
                     repo.Network.Push(remote, pushRefSpec, pushOptions);
+                }
+                else
+                {
+                    Trace.WriteLine($"No new changes were detected - skipping PR update.");
                 }
             }
             finally
@@ -375,7 +365,7 @@ namespace Dotnet.Docker
         private static void DirectoryCopy(string sourceDirName, string destDirName)
         {
             // Get the subdirectories for the specified directory.
-            DirectoryInfo dir = new DirectoryInfo(sourceDirName);
+            DirectoryInfo dir = new(sourceDirName);
 
             DirectoryInfo[] dirs = dir.GetDirectories()
                 .Where(dir => dir.Name != ".git")
@@ -403,21 +393,17 @@ namespace Dotnet.Docker
             }
         }
 
-        private static async Task<IEnumerable<IDependencyUpdater>> GetUpdatersAsync()
+        private static IEnumerable<IDependencyUpdater> GetProductUpdaters()
         {
             // NOTE: The order in which the updaters are returned/invoked is important as there are cross dependencies
             // (e.g. sha updater requires the version numbers to be updated within the Dockerfiles)
 
-            JObject release = await MinGitHelper.GetLatestMinGitReleaseAsync();
-
-            List<IDependencyUpdater> updaters = new()
-            {
+            List<IDependencyUpdater> updaters =
+            [
                 new NuGetConfigUpdater(RepoRoot, Options),
                 new BaseUrlUpdater(RepoRoot, Options),
-                new MinGitUrlUpdater(RepoRoot, release),
-                new MinGitShaUpdater(RepoRoot, release)
-            };
-            
+            ];
+
             foreach (string productName in Options.ProductVersions.Keys)
             {
                 updaters.Add(new VersionUpdater(VersionType.Build, productName, Options.DockerfileVersion, RepoRoot, Options));
@@ -429,10 +415,13 @@ namespace Dotnet.Docker
                 }
             }
 
-            updaters.Add(ScriptRunnerUpdater.GetDockerfileUpdater(RepoRoot));
-            updaters.Add(ScriptRunnerUpdater.GetReadMeUpdater(RepoRoot));
-
             return updaters;
         }
+
+        private static IEnumerable<IDependencyUpdater> GetGeneratedContentUpdaters() =>
+        [
+            ScriptRunnerUpdater.GetDockerfileUpdater(RepoRoot),
+            ScriptRunnerUpdater.GetReadMeUpdater(RepoRoot)
+        ];
     }
 }

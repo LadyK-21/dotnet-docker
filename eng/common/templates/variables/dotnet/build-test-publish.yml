@@ -1,7 +1,7 @@
 # Common variables for building/testing/publishing in the .NET team's pipelines
 
 variables:
-- template: common.yml
+- template: /eng/common/templates/variables/dotnet/common.yml@self
 
 - name: commonVersionsImageInfoPath
   value: build-info/docker
@@ -12,7 +12,7 @@ variables:
 - name: testResultsDirectory
   value: tests/Microsoft.DotNet.Docker.Tests/TestResults/
 - name: officialRepoPrefixes
-  value: public/,internal/private/
+  value: public/,internal/private/,unlisted/
 
 - name: mcrDocsRepoInfo.accessToken
   value: $(BotAccount-dotnet-docker-bot-PAT)
@@ -44,8 +44,3 @@ variables:
   value: $(dotnetDockerBot.userName)
 - name: gitHubVersionsRepoInfo.email
   value: $(dotnetDockerBot.email)
-
-- name: kusto.servicePrincipalPassword
-  value: $(app-DotnetDockerTelemetryIngestion-client-secret)
-- name: mcrStatus.servicePrincipalPassword
-  value: $(app-DotnetDockerMcrStatusApi-client-secret)

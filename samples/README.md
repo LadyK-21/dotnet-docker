@@ -1,15 +1,22 @@
 # .NET container samples
 
-The following samples and guidance demonstrate how to use .NET and Docker for development, testing and production. You can equally use the samples for learning about containers or as the basis of your own container images.
+The following samples and guidance demonstrate how to use .NET and Docker for development, testing and production. You can use the samples for learning about containers or as the basis of your own container images.
 
 Kubernetes samples are provided in the [kubernetes](kubernetes/README.md) directory.
+
+> [!IMPORTANT]
+>
+> [.NET 9 containers breaking changes](https://learn.microsoft.com/dotnet/core/compatibility/9.0#containers)
+>
+> [.NET 8 containers breaking changes](https://learn.microsoft.com/dotnet/core/compatibility/8.0#containers)
 
 ## Building images
 
 * [Build a .NET container image](dotnetapp/README.md)
 * [Build an ASP.NET Core container image](aspnetapp/README.md)
+* [Build a single file app](releasesapp/README.md)
+* [Build a native AOT app](releasesapi/README.md)
 * [Building a globalization and time zone aware (or unaware) image](globalapp/README.md)
-* [Container best practices](container-best-practices.md)
 * [Build for a platform](build-for-a-platform.md)
 
 ## Development guidance
@@ -32,6 +39,7 @@ Kubernetes samples are provided in the [kubernetes](kubernetes/README.md) direct
 
 ## Other documentation
 
+* [.NET 8 Container Workshop](https://github.com/richlander/container-workshop)
 * [Introduction to .NET and Docker](https://learn.microsoft.com/dotnet/core/docker/)
 * [Announcing built-in container support for the .NET SDK](https://devblogs.microsoft.com/dotnet/announcing-builtin-container-support-for-the-dotnet-sdk/)
 * [Staying safe in containers](https://devblogs.microsoft.com/dotnet/staying-safe-with-dotnet-containers/)
@@ -49,12 +57,10 @@ docker run --rm mcr.microsoft.com/dotnet/samples
 The following command will run an ASP.NET Core console app in a container that you can access in your web browser at `http://localhost:8000`.
 
 ```console
-docker run --rm -it -p 8000:80 mcr.microsoft.com/dotnet/samples:aspnetapp
+docker run --rm -it -p 8000:8080 mcr.microsoft.com/dotnet/samples:aspnetapp
 ```
 
 ## Docker Repositories
 
-You can find .NET container images at the following Docker repositories:
-
-* [dotnet](https://hub.docker.com/_/microsoft-dotnet/): .NET
-* [dotnet/framework](https://hub.docker.com/_/microsoft-dotnet-framework/): .NET Framework
+* [dotnet](https://github.com/dotnet/dotnet-docker/blob/main/README.md): .NET
+* [dotnet/framework](https://github.com/microsoft/dotnet-framework-docker/blob/main/README.md): .NET Framework, ASP.NET and WCF
