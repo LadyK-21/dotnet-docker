@@ -1,6 +1,10 @@
-# New Windows Release
-
-Windows version: &lt;version&gt;
+---
+name: ".NET Docker Release - New Windows Version"
+about: "Checklist for releasing .NET container images for new Windows major versions"
+title: ".NET Container Images Release - New Windows Version - <new Windows version>"
+labels: docker
+assignees: lbussell
+---
 
 ## Main Branch Tasks
 
@@ -20,7 +24,7 @@ Windows version: &lt;version&gt;
       1. - [ ] Run `.\build-and-test.ps1 -OS windowsservercore-<VERSION>` to build and test your changes for Windows Server Core
 1. - [ ] Create PR
 1. - [ ] Get PR signoff
-1. - [ ] Merge PR and build/publish as part of the main branch [release process](dotnet-release.md) for the next .NET release
+1. - [ ] Merge PR and build/publish as part of the main branch [release process](https://github.com/dotnet/release/blob/main/.github/ISSUE_TEMPLATE/dotnet-docker-servicing-release.md) for the next .NET release
 1. - [ ] Create an announcement (example: [Nano Server, version 20H2](https://github.com/dotnet/dotnet-docker/issues/2322))
 1. - [ ] Update the samples to reference the new Windows version:
       - [ ] [Nano Server and Windows Server Core sample Dockerfiles](https://github.com/dotnet/dotnet-docker/tree/main/samples)
@@ -28,4 +32,4 @@ Windows version: &lt;version&gt;
 
 ## Nightly Branch Tasks
 
-- [ ] Merge these changes to the nightly branch as part of the nightly branch [release process](dotnet-release.md) for the next .NET release.
+- [ ] Merge these changes to the nightly branch as part of the nightly branch [release process](./dotnet-release-lifecycle.md) for the next .NET release.

@@ -2,37 +2,63 @@
     set dotnetVersion to join(slice(split(PRODUCT_VERSION, "."), 0, 2), ".") ^
     set isAlpine to find(OS_VERSION, "alpine") >= 0 ^
     set isMariner to find(OS_VERSION, "cbl-mariner") >= 0 ^
-    set isFullMariner to defined(match(OS_VERSION, "^cbl-mariner\d+\.\d+$")) ^
-    set baseUrl to VARIABLES[cat("base-url|", dotnetVersion, "|", VARIABLES["branch"])] ^
-    set isInternal to find(baseUrl, "msrc") >= 0 || find(baseUrl, "internal") >= 0 ^
-    set isRpmInstall to isFullMariner && dotnetVersion = "6.0" ^
-    set baseImageTag to cat("$REPO:", VARIABLES[cat("dotnet|", dotnetVersion, "|product-version")], "-", OS_VERSION, ARCH_TAG_SUFFIX) ^
-    set internalInstallerBase to when(isAlpine || isMariner,
+    set isAzureLinux to isMariner || find(OS_VERSION, "azurelinux") >= 0 ^
+    set baseUrl to VARIABLES[cat("dotnet|", dotnetVersion, "|base-url|", VARIABLES["branch"])] ^
+    set isInternal to find(baseUrl, "artifacts.visualstudio.com") >= 0 ^
+    set tagVersion to VARIABLES[cat("dotnet|", dotnetVersion, "|fixed-tag")] ^
+    set baseImageTag to cat("$REPO:", tagVersion, "-", OS_VERSION, ARCH_TAG_SUFFIX) ^
+
+    _ Workaround for https://bugs.launchpad.net/ubuntu/+source/tar/+bug/2059734. Remove when fixed. ^
+    set useNobleArm32Workaround to OS_VERSION_BASE = "noble" && ARCH_SHORT = "arm" ^
+    set osVersionBase to when(useNobleArm32Workaround, "jammy", OS_VERSION_BASE) ^
+
+    set internalInstallerBase to when(isAlpine || isAzureLinux,
         baseImageTag,
-        cat(ARCH_VERSIONED, "/buildpack-deps:", OS_VERSION_BASE, "-curl")) ^
-    set pkgs to filter(when(isAlpine,
-        [
-            "curl",
-            "icu-data-full",
-            "icu-libs",
-            "git"
-        ],
-        when(isMariner,
+        cat(ARCH_VERSIONED, "/buildpack-deps:", osVersionBase, "-curl")) ^
+
+    set pkgs to filter(
+        when(isAlpine,
+            when(dotnetVersion = "8.0",
             [
+                "curl",
                 "git",
-                when(find(OS_VERSION, "1.0") < 0, "tar", "")
+                "icu-data-full",
+                "icu-libs",
+                "tzdata",
             ],
             [
                 "curl",
                 "git",
-                "wget"
-            ])), len)
+                "icu-data-full",
+                "icu-libs",
+                "libatomic",
+                "tzdata",
+            ]),
+        when(isAzureLinux,
+            when (isMariner,
+                [
+                    "git",
+                    "libatomic_ops",
+                    "tar",
+                ],
+                [
+                    "git",
+                    "libgcc-atomic",
+                    "tar",
+                ]),
+            [
+                "curl",
+                "git",
+                "libatomic1",
+                "wget",
+            ]
+        )), len)
 }}ARG REPO=mcr.microsoft.com/dotnet/aspnet
-{{if isInternal:# Installer image
-FROM {{internalInstallerBase}} AS installer
+{{if isInternal || useNobleArm32Workaround:# Installer image
+FROM {{internalInstallerBase}} AS installer{{if isInternal:
 
-ARG SAS_QUERY_STRING
-{{if isFullMariner && !isRpmInstall:
+ARG ACCESSTOKEN}}
+{{if isAzureLinux:
 RUN {{InsertTemplate("../Dockerfile.linux.install-pkgs",
     [
         "pkgs": ["tar"]
@@ -40,39 +66,29 @@ RUN {{InsertTemplate("../Dockerfile.linux.install-pkgs",
 }}
 {{InsertTemplate("Dockerfile.linux.install-sdk",
     [
-        "install-method": when(isRpmInstall, "download", "download-and-install"),
+        "install-method": "download-and-install",
         "is-internal": isInternal,
-        "url-suffix": "$SAS_QUERY_STRING",
-        "is-rpm-install": isRpmInstall
+        "disable-first-run-experience": useNobleArm32Workaround,
+        "no-version-env-var": useNobleArm32Workaround
     ])}}
 
 
 # .NET SDK image
 }}FROM {{baseImageTag}}
 
-{{InsertTemplate("Dockerfile.envs")}}
+{{InsertTemplate("Dockerfile.envs", ["is-internal": isInternal])}}
 
 RUN {{InsertTemplate("../Dockerfile.linux.install-pkgs",
 [
     "pkgs": pkgs
 ])}}
 
-{{if isInternal:{{
-if isRpmInstall:{{InsertTemplate("Dockerfile.linux.install-sdk",
-    [
-        "install-method": "copy-and-install",
-        "is-internal": isInternal,
-        "url-suffix": "$SAS_QUERY_STRING",
-        "installer-stage": "installer",
-        "is-rpm-install": isRpmInstall
-    ])}}^
-else:COPY --from=installer ["/usr/share/dotnet", "/usr/share/dotnet"]
+{{if isInternal || useNobleArm32Workaround:COPY --from=installer ["/usr/share/dotnet", "/usr/share/dotnet"]
 
-{{InsertTemplate("Dockerfile.linux.first-run")}}}}^
-else:{{InsertTemplate("Dockerfile.linux.install-sdk",
+{{InsertTemplate("Dockerfile.linux.first-run")}}^else:{{
+    InsertTemplate("Dockerfile.linux.install-sdk",
     [
         "install-method": "download-and-install",
-        "is-rpm-install": isRpmInstall
-    ])}}}}{{if !isAlpine || ARCH_SHORT = "x64":
+    ])}}}}{{if !(isAlpine && ARCH_SHORT != "x64"):
 
 {{InsertTemplate("Dockerfile.linux.install-powershell")}}}}

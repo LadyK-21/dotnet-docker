@@ -17,7 +17,6 @@ namespace Microsoft.DotNet.Docker.Tests
     public class DockerHelper
     {
         public static string DockerOS => GetDockerOS();
-        public static string DockerArchitecture => GetDockerArch();
         public static string ContainerWorkDir => IsLinuxContainerModeEnabled ? "/sandbox" : "c:\\sandbox";
         public static bool IsLinuxContainerModeEnabled => string.Equals(DockerOS, "linux", StringComparison.OrdinalIgnoreCase);
         public static string TestArtifactsDir { get; } = Path.Combine(Directory.GetCurrentDirectory(), "TestAppArtifacts");
@@ -68,12 +67,12 @@ namespace Microsoft.DotNet.Docker.Tests
         /// this helper image stores the entire root of the distroless filesystem at the specified destination path within
         /// the built container image.
         /// </remarks>
-        public string BuildDistrolessHelper(DotNetImageType imageType, ProductImageData imageData, string rootDestination)
+        public string BuildDistrolessHelper(DotNetImageRepo imageRepo, ProductImageData imageData, string copyDestination, string copyOrigin = "/")
         {
-            string dockerfile = Path.Combine(TestArtifactsDir, "Dockerfile.distroless");
-            string distrolessImageTag = imageData.GetImage(imageType, this);
+            string dockerfile = Path.Combine(TestArtifactsDir, "Dockerfile.copy");
+            string distrolessImageTag = imageData.GetImage(imageRepo, this);
 
-            // Use the runtime-deps image as the target of the filesyste copy.
+            // Use the runtime-deps image as the target of the filesystem copy.
             // Not all images are versioned the same as the mainline .NET products.
             // Use the version family (e.g. the .NET product family version) as the
             // version of the runtime-deps image get the correct image.
@@ -81,25 +80,46 @@ namespace Microsoft.DotNet.Docker.Tests
             {
                 Version = imageData.VersionFamily,
                 OS = imageData.OS,
-                Arch = imageData.Arch
+                Arch = imageData.Arch,
             };
+
+            // Special case for Aspire Dashboard 9.0 images:
+            // Aspire Dashboard 9.0 is based on .NET 8 since Azure Linux 3.0 does not yet have FedRAMP certification.
+            // Remove workaround once https://github.com/dotnet/dotnet-docker/issues/5375 is fixed.
+            if (imageRepo == DotNetImageRepo.Aspire_Dashboard && imageData.VersionFamily == ImageVersion.V9_0)
+            {
+                runtimeDepsImageData = runtimeDepsImageData with
+                {
+                    Version = ImageVersion.V8_0
+                };
+            }
+
+            // Make sure we don't try to get an image that we don't need before we specify that we want the distro-full
+            // version. The image might not be on disk. The correct, distro-full versino will be pulled in the helper
+            // image build.
             string baseImageTag = runtimeDepsImageData
-                .GetImage(DotNetImageType.Runtime_Deps, this)
+                .GetImage(DotNetImageRepo.Runtime_Deps, this, skipPull: true)
                 .Replace("-distroless", string.Empty)
                 .Replace("-chiseled", string.Empty);
 
             string tag = imageData.GetIdentifier("distroless-helper");
+
             Build(tag, dockerfile, null, TestArtifactsDir, false,
-                buildArgs: new string[]
-                {
-                    $"distroless_image={distrolessImageTag}",
+                platform: imageData.Platform,
+                buildArgs:
+                [
+                    $"copy_image={distrolessImageTag}",
                     $"base_image={baseImageTag}",
-                    $"root_destination={rootDestination}"
-                });
+                    $"copy_origin={copyOrigin}",
+                    $"copy_destination={copyDestination}"
+                ]);
+
             return tag;
         }
 
         public static bool ContainerExists(string name) => ResourceExists("container", $"-f \"name={name}\"");
+
+        public static bool ContainerIsRunning(string name) => Execute($"inspect --format=\"{{{{.State.Running}}}}\" {name}") == "true";
 
         public void Copy(string src, string dest) => ExecuteWithLogging($"cp {src} {dest}");
 
@@ -112,6 +132,11 @@ namespace Microsoft.DotNet.Docker.Tests
                     ExecuteWithLogging($"logs {container}", ignoreErrors: true);
                 }
 
+                // If a container is already stopped, running `docker stop` again has no adverse effects.
+                // This prevents some issues where containers could fail to be forcibly removed while they're running.
+                // e.g. https://github.com/dotnet/dotnet-docker/issues/5127
+                StopContainer(container);
+
                 ExecuteWithLogging($"container rm -f {container}");
             }
         }
@@ -121,6 +146,14 @@ namespace Microsoft.DotNet.Docker.Tests
             if (ImageExists(tag))
             {
                 ExecuteWithLogging($"image rm -f {tag}");
+            }
+        }
+
+        private void StopContainer(string container)
+        {
+            if (ContainerExists(container))
+            {
+                ExecuteWithLogging($"stop {container}", autoRetry: true);
             }
         }
 
@@ -199,12 +232,11 @@ namespace Microsoft.DotNet.Docker.Tests
         }
 
         private static string GetDockerOS() => Execute("version -f \"{{ .Server.Os }}\"");
-        private static string GetDockerArch() => Execute("version -f \"{{ .Server.Arch }}\"");
 
         public string GetImageUser(string image) => ExecuteWithLogging($"inspect -f \"{{{{ .Config.User }}}}\" {image}");
 
         public IDictionary<string, string> GetEnvironmentVariables(string image)
-{
+        {
             string envVarsStr = ExecuteWithLogging($"inspect -f \"{{{{json .Config.Env }}}}\" {image}");
             JArray envVarsArray = (JArray)JsonConvert.DeserializeObject(envVarsStr);
             return envVarsArray
@@ -216,7 +248,7 @@ namespace Microsoft.DotNet.Docker.Tests
         public string GetContainerAddress(string container)
         {
             string containerAddress = ExecuteWithLogging("inspect -f \"{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}\" " + container);
-            if (String.IsNullOrWhiteSpace(containerAddress)){
+            if (string.IsNullOrWhiteSpace(containerAddress)){
                 containerAddress = ExecuteWithLogging("inspect -f \"{{.NetworkSettings.Networks.nat.IPAddress }}\" " + container);
             }
 
@@ -237,6 +269,16 @@ namespace Microsoft.DotNet.Docker.Tests
 
         public void Pull(string image) => ExecuteWithLogging($"pull {image}", autoRetry: true);
 
+        public void PullExternalImage(string image)
+        {
+            if (!string.IsNullOrEmpty(Config.CacheRegistry))
+            {
+                image = $"{Config.CacheRegistry}/{image}";
+            }
+
+            Pull(image);
+        }
+
         public string GetHistory(string image) =>
             ExecuteWithLogging($"history --no-trunc --format \"{{{{ .CreatedBy }}}}\" {image}");
 
@@ -255,21 +297,29 @@ namespace Microsoft.DotNet.Docker.Tests
             bool detach = false,
             string runAsUser = null,
             bool skipAutoCleanup = false,
-            bool useMountedDockerSocket = false)
+            bool useMountedDockerSocket = false,
+            bool silenceOutput = false,
+            bool tty = true)
         {
             string cleanupArg = skipAutoCleanup ? string.Empty : " --rm";
-            string detachArg = detach ? " -d -t" : string.Empty;
+            string detachArg = detach ? " -d" : string.Empty;
+            string ttyArg = detach && tty ? " -t" : string.Empty;
             string userArg = runAsUser != null ? $" -u {runAsUser}" : string.Empty;
             string workdirArg = workdir == null ? string.Empty : $" -w {workdir}";
             string mountedDockerSocketArg = useMountedDockerSocket ? " -v /var/run/docker.sock:/var/run/docker.sock" : string.Empty;
+            if (silenceOutput)
+            {
+                return Execute(
+                    $"run --name {name}{cleanupArg}{workdirArg}{userArg}{detachArg}{ttyArg}{mountedDockerSocketArg} {optionalRunArgs} {image} {command}");
+            }
             return ExecuteWithLogging(
-                $"run --name {name}{cleanupArg}{workdirArg}{userArg}{detachArg}{mountedDockerSocketArg} {optionalRunArgs} {image} {command}");
+                $"run --name {name}{cleanupArg}{workdirArg}{userArg}{detachArg}{ttyArg}{mountedDockerSocketArg} {optionalRunArgs} {image} {command}");
         }
 
         /// <summary>
         /// Creates a file system volume that is backed by memory instead of disk.
         /// </summary>
-        public string CreateTmpfsVolume(string name, bool ownedByDistrolessUser = false)
+        public string CreateTmpfsVolume(string name, int? ownerUid = null)
         {
             // Create volume using the local driver (the default driver),
             // which accepts options similar to the 'mount' command.
@@ -278,9 +328,9 @@ namespace Microsoft.DotNet.Docker.Tests
             // - make this volume an in-memory file system with a unique device name (type=tmpfs, device={guid}}).
             // - to set the owner of the root of the file system (o=uid=101).
             string optionalArgs = string.Empty;
-            if (ownedByDistrolessUser)
+            if (ownerUid.HasValue)
             {
-                optionalArgs += " --opt o=uid=101";
+                optionalArgs += $" --opt o=uid={ownerUid.Value}";
             }
             string device = Guid.NewGuid().ToString("D");
             return ExecuteWithLogging($"volume create --opt type=tmpfs --opt device={device}{optionalArgs} {name}");

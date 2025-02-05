@@ -42,7 +42,7 @@ namespace Microsoft.DotNet.Docker.Tests
             {
                 return;
             }
-            
+
             await VerifySampleAsync(imageData, SampleImageType.Dotnetapp, (image, containerName) =>
             {
                 string output = DockerHelper.Run(image, containerName);
@@ -58,24 +58,22 @@ namespace Microsoft.DotNet.Docker.Tests
         [MemberData(nameof(GetImageData))]
         public async Task VerifyAspnetSample(SampleImageData imageData)
         {
-            if (imageData.OS == OS.Bionic && imageData.DockerfileSuffix != "ubuntu-x64")
-            {
-                return;
-            }
-
             await VerifySampleAsync(imageData, SampleImageType.Aspnetapp, async (image, containerName) =>
             {
+                int port = imageData.DockerfileSuffix == "windowsservercore-iis" ? 80 : imageData.DefaultPort;
+
                 try
                 {
                     DockerHelper.Run(
                         image: image,
                         name: containerName,
                         detach: true,
-                        optionalRunArgs: $"-p {imageData.DefaultPort}");
+                        optionalRunArgs: $"-p {port}",
+                        skipAutoCleanup: true);
 
                     if (!Config.IsHttpVerificationDisabled)
                     {
-                        await ImageScenarioVerifier.VerifyHttpResponseFromContainerAsync(containerName, DockerHelper, OutputHelper, imageData.DefaultPort);
+                        await WebScenario.VerifyHttpResponseFromContainerAsync(containerName, DockerHelper, OutputHelper, port);
                     }
 
                     ValidateEnvironmentVariables(imageData, image, SampleImageType.Aspnetapp);
@@ -90,6 +88,12 @@ namespace Microsoft.DotNet.Docker.Tests
         [Fact]
         public void VerifyComplexAppSample()
         {
+            // complexapp sample doesn't currently support building on Windows.
+            if (!DockerHelper.IsLinuxContainerModeEnabled)
+            {
+                return;
+            }
+
             string appTag = SampleImageData.GetImageName("complexapp-local-app");
             string testTag = SampleImageData.GetImageName("complexapp-local-test");
             string sampleFolder = Path.Combine(s_samplesPath, "complexapp");
@@ -103,13 +107,6 @@ namespace Microsoft.DotNet.Docker.Tests
                 string containerName = ImageData.GenerateContainerName("sample-complex");
                 string output = DockerHelper.Run(appTag, containerName);
                 Assert.StartsWith("string: The quick brown fox jumps over the lazy dog", output);
-
-                if (!DockerHelper.IsLinuxContainerModeEnabled &&
-                    DockerHelper.DockerArchitecture.StartsWith("arm", StringComparison.OrdinalIgnoreCase))
-                {
-                    // Skipping run app tests due to a .NET issue: https://github.com/dotnet/runtime/issues/2082
-                    return;
-                }
 
                 // Run the app's tests
                 DockerHelper.Build(testTag, dockerfilePath, target: "test", contextDir: sampleFolder);
@@ -182,9 +179,9 @@ namespace Microsoft.DotNet.Docker.Tests
 
             if (imageType == SampleImageType.Aspnetapp)
             {
-                variables.Add(new EnvironmentVariableInfo("ASPNETCORE_URLS", "http://+:80"));
+                variables.Add(new EnvironmentVariableInfo("ASPNETCORE_HTTP_PORTS", imageData.DefaultPort.ToString()));
             }
-            
+
             EnvironmentVariableInfo.Validate(
                 variables,
                 image,

@@ -8,7 +8,6 @@ using System.Diagnostics;
 using System.Linq;
 using System.Text.RegularExpressions;
 
-#nullable enable
 namespace Dotnet.Docker
 {
     /// <summary>
@@ -29,7 +28,7 @@ namespace Dotnet.Docker
             _productName = productName;
             _options = options;
             _versionType = versionType;
-            string versionVariableName = GetVersionVariableName(versionType, productName, dockerfileVersion);
+            string versionVariableName = ManifestHelper.GetVersionVariableName(versionType, productName, dockerfileVersion);
 
             Trace.TraceInformation($"Updating {versionVariableName}");
 
@@ -63,7 +62,7 @@ namespace Dotnet.Docker
                 productName = "sdk";
             }
 
-            string versionVariableName = GetVersionVariableName(VersionType.Build, productName, dockerfileVersion);
+            string versionVariableName = ManifestHelper.GetVersionVariableName(VersionType.Build, productName, dockerfileVersion);
             Regex regex = GetVersionVariableRegex(versionVariableName);
             Match match = regex.Match(variables);
             if (!match.Success)
@@ -103,9 +102,5 @@ namespace Dotnet.Docker
             ManifestHelper.GetManifestVariableRegex(
                 versionVariableName,
                 $"(?<{s_versionGroupName}>[\\d]+.[\\d]+.[\\d]+(-[\\w]+(.[\\d]+)*)?)");
-
-        private static string GetVersionVariableName(VersionType versionType, string productName, string dockerfileVersion) =>
-            $"{productName}|{dockerfileVersion}|{versionType.ToString().ToLowerInvariant()}-version";
     }
 }
-#nullable disable

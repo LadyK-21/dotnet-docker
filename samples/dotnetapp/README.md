@@ -2,24 +2,29 @@
 
 This sample demonstrates how to build container images for .NET console apps. See [.NET Docker Samples](../README.md) for more samples.
 
-## Try a pre-built version of the sample
+## Run the sample image
 
-You can start by launching a sample from our [container registry](https://mcr.microsoft.com/).
+You can start by launching a sample from our [container registry](https://mcr.microsoft.com/product/dotnet/samples/about).
 
 ```console
-docker run --rm mcr.microsoft.com/dotnet/samples
+docker run --rm mcr.microsoft.com/dotnet/samples:dotnetapp-chiseled
 ```
 
-## Build a .NET image
+## Build the image
 
-You can build and run an image using the following instructions (if you've cloned this repo):
+You can build and run an image using the following instructions (cloninig the repo isn't necessary):
 
 ```console
-docker build --pull -t dotnetapp .
+docker build --pull -t dotnetapp 'https://github.com/dotnet/dotnet-docker.git#:samples/dotnetapp'
 docker run --rm dotnetapp
 ```
 
-You can also pass your own message to the app as an argument.
+Add the argument `-f <Dockerfile>` to build the sample in a different configuration.
+For example, build an [Ubuntu Chiseled](../../documentation/ubuntu-chiseled.md) image using [Dockerfile.chiseled](Dockerfile.chiseled):
+
+```console
+docker build --pull -t dotnetapp -f Dockerfile.chiseled 'https://github.com/dotnet/dotnet-docker.git#:samples/dotnetapp'
+```
 
 ## Supported Linux distros
 
@@ -28,25 +33,21 @@ The .NET Team publishes images for [multiple distros](../../documentation/suppor
 Samples are provided for:
 
 - [Alpine](Dockerfile.alpine)
+- [Alpine with ICU installed](Dockerfile.alpine-icu)
 - [Debian](Dockerfile.debian)
 - [Ubuntu](Dockerfile.ubuntu)
 - [Ubuntu Chiseled](Dockerfile.chiseled)
 
-The default [Dockerfile](Dockerfile) uses a major.minor version tag, which references a multi-platform image that provides Debian and Windows Nano Server images (depending on the requesting client).
-
-More extensive samples are provided for Alpine:
-
-- [Alpine with trimming, ready-to-run compilation, and self-contained publishing](Dockerfile.alpine-slim)
-- [Alpine with ICU (for globalization)](Dockerfile.alpine-icu)
-
-These patterns can be applied to other distros.
-
 ## Supported Windows versions
 
-The .NET Team publishes images for [multiple Windows versions](../../documentation/supported-platforms.md.md). You must have [Windows containers enabled](https://docs.docker.com/docker-for-windows/#switch-between-windows-and-linux-containers) to use these images.
+The .NET Team publishes images for [multiple Windows versions](../../documentation/supported-platforms.md). You must have [Windows containers enabled](https://docs.docker.com/docker-for-windows/#switch-between-windows-and-linux-containers) to use these images.
 
 Samples are provided for
 
 - [Nano Server](Dockerfile.nanoserver)
-- [Nano Server with trimming, ready-to-run compilation, and self-contained publishing](Dockerfile.nanoserver-slim)
 - [Windows Server Core](Dockerfile.windowsservercore)
+
+Windows variants of the sample can be pulled via one the following image names:
+
+- `mcr.microsoft.com/dotnet/samples:dotnetapp-nanoserver-1809`
+- `mcr.microsoft.com/dotnet/samples:dotnetapp-nanoserver-ltsc2022`

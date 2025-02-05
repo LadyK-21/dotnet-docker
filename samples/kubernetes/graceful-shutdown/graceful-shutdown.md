@@ -49,8 +49,8 @@ app.Use((httpContext, next) =>
 {
     var hostLifetime = httpContext.RequestServices.GetRequiredService<IHostApplicationLifetime>();
     var originalCt = httpContext.RequestAborted;
-    var combinedCt = CancellationTokenSource.CreateLinkedTokenSource(originalCt, hostLifetime.ApplicationStopping).Token;
-    httpContext.RequestAborted = combinedCt;
+    using var combinedCts = CancellationTokenSource.CreateLinkedTokenSource(originalCt, hostLifetime.ApplicationStopping);
+    httpContext.RequestAborted = combinedCts.Token;
     return next(httpContext);
 });
 ```
@@ -107,7 +107,8 @@ public class DelayedShutdownHostLifetime : IHostLifetime, IDisposable
 }
 ```
 
-> Note: do not confuse `IHostLifetime` with `IHostApplicationLifetime`--they are related, but different interfaces. It is the `IHostLifetime` instance that listens for signals, including `SIGTERM`, and once a signal arrives, it calls into `IHostApplicationLifetime` instance to orchestrate application shutdown. For more information see [generic host shutdown documentation](https://learn.microsoft.com/dotnet/core/extensions/generic-host#host-shutdown)
+> [!NOTE]
+> Do not confuse `IHostLifetime` with `IHostApplicationLifetime`--they are related, but different interfaces. It is the `IHostLifetime` instance that listens for signals, including `SIGTERM`, and once a signal arrives, it calls into `IHostApplicationLifetime` instance to orchestrate application shutdown. For more information see [generic host shutdown documentation](https://learn.microsoft.com/dotnet/core/extensions/generic-host#host-shutdown)
 
 Make ASP.NET use `DelayedShutdownHostLifetime` by adding it to the dependency injection container:
 
@@ -122,8 +123,8 @@ The `IHostApplicationLifetime.ApplicationStopping` token will now be activated o
 
 ## Background services
 
-For background services ASP.NET provides [`IHostedService` interface and a `BackgroundService` base class](https://learn.microsoft.com/aspnet/core/fundamentals/host/hosted-services?view=aspnetcore-7.0) that allow for easy handling of `ApplicationStopping` event:
+For background services ASP.NET provides [`IHostedService` interface and a `BackgroundService` base class](https://learn.microsoft.com/aspnet/core/fundamentals/host/hosted-services) that allow for easy handling of `ApplicationStopping` event:
 
-- If you are using `BackgroundService` base class, the `CancellationToken` passed to [`ExecuteAsync` method](https://learn.microsoft.com/aspnet/core/fundamentals/host/hosted-services?view=aspnetcore-7.0#backgroundservice-base-class) will be activated if `ApplicationStopping` event occurs. So as long as you are using this token, or a token derived from it, for all asynchronous calls, they will be automatically cancelled upon application shutdown.
+- If you are using `BackgroundService` base class, the `CancellationToken` passed to [`ExecuteAsync` method](https://learn.microsoft.com/aspnet/core/fundamentals/host/hosted-services?#backgroundservice-base-class) will be activated if `ApplicationStopping` event occurs. So as long as you are using this token, or a token derived from it, for all asynchronous calls, they will be automatically cancelled upon application shutdown.
 
-- If you are implementing `IHostedService` interface directly, make sure you cancel all background processing when the framework calls [`StopAsync` method](https://learn.microsoft.com/aspnet/core/fundamentals/host/hosted-services?view=aspnetcore-7.0#stopasync) on your service. This usually means you need to keep a reference, or a `CancellationTokenSource`, for all background tasks in progress, so that you can cancel them when `StopAsync` is called.
+- If you are implementing `IHostedService` interface directly, make sure you cancel all background processing when the framework calls [`StopAsync` method](https://learn.microsoft.com/aspnet/core/fundamentals/host/hosted-services?#stopasync) on your service. This usually means you need to keep a reference, or a `CancellationTokenSource`, for all background tasks in progress, so that you can cancel them when `StopAsync` is called.

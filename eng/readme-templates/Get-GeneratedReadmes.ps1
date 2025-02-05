@@ -5,6 +5,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Import-Module -force $PSScriptRoot/../DependencyManagement.psm1
 
 if ($Validate) {
     $customImageBuilderArgs = " --validate"
@@ -21,6 +22,7 @@ $onDockerfilesGenerated = {
     param($ContainerName)
 
     if (-Not $Validate) {
+        CopyReadme $ContainerName "README.aspire-dashboard.md"
         CopyReadme $ContainerName "README.aspnet.md"
         CopyReadme $ContainerName "README.md"
         CopyReadme $ContainerName "README.monitor.md"
@@ -30,13 +32,23 @@ $onDockerfilesGenerated = {
         CopyReadme $ContainerName "README.samples.md"
         CopyReadme $ContainerName "README.sdk.md"
 
-        CopyReadme $ContainerName ".mar/portal/README.aspnet.portal.md"
-        CopyReadme $ContainerName ".mar/portal/README.monitor.portal.md"
-        CopyReadme $ContainerName ".mar/portal/README.monitor-base.portal.md"
-        CopyReadme $ContainerName ".mar/portal/README.runtime-deps.portal.md"
-        CopyReadme $ContainerName ".mar/portal/README.runtime.portal.md"
-        CopyReadme $ContainerName ".mar/portal/README.samples.portal.md"
-        CopyReadme $ContainerName ".mar/portal/README.sdk.portal.md"
+        CopyReadme $ContainerName ".portal-docs/docker-hub/README.aspire-dashboard.md"
+        CopyReadme $ContainerName ".portal-docs/docker-hub/README.aspnet.md"
+        CopyReadme $ContainerName ".portal-docs/docker-hub/README.monitor.md"
+        CopyReadme $ContainerName ".portal-docs/docker-hub/README.monitor-base.md"
+        CopyReadme $ContainerName ".portal-docs/docker-hub/README.runtime-deps.md"
+        CopyReadme $ContainerName ".portal-docs/docker-hub/README.runtime.md"
+        CopyReadme $ContainerName ".portal-docs/docker-hub/README.samples.md"
+        CopyReadme $ContainerName ".portal-docs/docker-hub/README.sdk.md"
+
+        CopyReadme $ContainerName ".portal-docs/mar/README.aspire-dashboard.portal.md"
+        CopyReadme $ContainerName ".portal-docs/mar/README.aspnet.portal.md"
+        CopyReadme $ContainerName ".portal-docs/mar/README.monitor.portal.md"
+        CopyReadme $ContainerName ".portal-docs/mar/README.monitor-base.portal.md"
+        CopyReadme $ContainerName ".portal-docs/mar/README.runtime-deps.portal.md"
+        CopyReadme $ContainerName ".portal-docs/mar/README.runtime.portal.md"
+        CopyReadme $ContainerName ".portal-docs/mar/README.samples.portal.md"
+        CopyReadme $ContainerName ".portal-docs/mar/README.sdk.portal.md"
     }
 }
 
@@ -50,7 +62,7 @@ function Invoke-GenerateReadme {
 }
 
 if (!$Branch) {
-    $Branch = & $PSScriptRoot/../Get-Branch.ps1
+    $Branch = Get-Branch
 }
 
 Invoke-GenerateReadme "manifest.json" $Branch

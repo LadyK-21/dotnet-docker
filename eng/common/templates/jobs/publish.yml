@@ -7,6 +7,7 @@ parameters:
 jobs:
 - job: Publish
   pool: ${{ parameters.pool }}
+  timeoutInMinutes: 90
   variables:
   - name: imageBuilder.commonCmdArgs
     value: >
@@ -21,80 +22,156 @@ jobs:
       value: $[ replace(variables['Build.SourceBranch'], 'refs/heads/', '') ]
     ${{ if startsWith(variables['Build.SourceBranch'], 'refs/pull/') }}:
       value: $[ replace(variables['System.PullRequest.SourceBranch'], 'refs/heads/', '') ]
+  - name: imageInfoHostDir
+    value: $(Build.ArtifactStagingDirectory)/imageInfo
+  - name: imageInfoContainerDir
+    value: $(artifactsPath)/imageInfo
+  - name: sourceBuildIdOutputDir
+    value: $(Build.ArtifactStagingDirectory)/sourceBuildId
   - ${{ parameters.customPublishVariables }}
   steps:
-  - template: ../steps/retain-build.yml
-  - template: ../steps/init-docker-linux.yml
+  - template: /eng/common/templates/steps/retain-build.yml@self
+  - template: /eng/common/templates/steps/init-docker-linux.yml@self
   - pwsh: |
       $azdoOrgName = Split-Path -Leaf $Env:SYSTEM_COLLECTIONURI
       echo "##vso[task.setvariable variable=azdoOrgName]$azdoOrgName"
     displayName: Set Publish Variables
   - ${{ parameters.customInitSteps }}
-  - template: ../steps/validate-branch.yml
+  - template: /eng/common/templates/steps/validate-branch.yml@self
     parameters:
       internalProjectName: ${{ parameters.internalProjectName }}
-  - template: ../steps/download-build-artifact.yml
+  - template: /eng/common/templates/steps/download-build-artifact.yml@self
     parameters:
-      targetPath: $(Build.ArtifactStagingDirectory)
+      targetPath: $(imageInfoHostDir)
       artifactName: image-info
-  - template: ../steps/set-image-info-path-var.yml
+      # This can fail in scenarios where no build jobs have run to produce any artifacts
+      continueOnError: true
+  - template: /eng/common/templates/steps/set-image-info-path-var.yml@self
     parameters:
       publicSourceBranch: $(publicSourceBranch)
-  - template: ../steps/set-dry-run.yml
-  - script: echo $(sourceBuildId) > $(Build.ArtifactStagingDirectory)/source-build-id.txt
-    displayName: Write Source Build ID to File
-  - publish: $(Build.ArtifactStagingDirectory)/source-build-id.txt
-    artifact: source-build-id
-    displayName: Publish Source Build ID Artifact
+  - template: /eng/common/templates/steps/set-dry-run.yml@self
   - script: echo "##vso[task.setvariable variable=imageQueueTime]$(date --rfc-2822)"
     displayName: Set Publish Variables
   - script: >
       $(runImageBuilderCmd) trimUnchangedPlatforms
-      '$(artifactsPath)/image-info.json'
+      '$(imageInfoContainerDir)/image-info.json'
     displayName: Trim Unchanged Images
-  - script: >
-      $(runImageBuilderCmd) copyAcrImages
-      '$(acr.servicePrincipalName)'
-      '$(acr.servicePrincipalPassword)'
-      '$(acr.servicePrincipalTenant)'
-      '$(acr.subscription)'
-      '$(acr.resourceGroup)'
-      '$(stagingRepoPrefix)'
-      --os-type '*'
-      --architecture '*'
-      --repo-prefix '$(publishRepoPrefix)'
-      --image-info '$(artifactsPath)/image-info.json'
-      $(dryRunArg)
-      $(imageBuilder.pathArgs)
-      $(imageBuilder.commonCmdArgs)
-    displayName: Copy Images
-  - script: >
-      $(runImageBuilderCmd) publishManifest
-      '$(artifactsPath)/image-info.json'
-      --repo-prefix '$(publishRepoPrefix)'
-      --registry-creds '$(acr.server)=$(acr.userName);$(acr.password)'
-      --os-type '*'
-      --architecture '*'
-      $(dryRunArg)
-      $(imageBuilder.pathArgs)
-      $(imageBuilder.commonCmdArgs)
-    displayName: Publish Manifest
-  - publish: $(Build.ArtifactStagingDirectory)/image-info.json
-    artifact: image-info-final-$(System.JobAttempt)
-    displayName: Publish Image Info File Artifact
-  - template: ../steps/wait-for-mcr-image-ingestion.yml
+  - template: /eng/common/templates/steps/run-imagebuilder.yml@self
     parameters:
-      imageInfoPath: '$(artifactsPath)/image-info.json'
+      displayName: Copy Images
+      serviceConnection: $(publish.serviceConnectionName)
+      internalProjectName: ${{ parameters.internalProjectName }}
+      args: >
+        copyAcrImages
+        '$(acr.subscription)'
+        '$(acr.resourceGroup)'
+        '$(stagingRepoPrefix)'
+        '$(acr-staging.server)'
+        --os-type '*'
+        --architecture '*'
+        --repo-prefix '$(publishRepoPrefix)'
+        --image-info '$(imageInfoContainerDir)/image-info.json'
+        $(dryRunArg)
+        $(imageBuilder.pathArgs)
+        $(imageBuilder.commonCmdArgs)
+  - template: /eng/common/templates/steps/run-imagebuilder.yml@self
+    parameters:
+      displayName: Publish Manifest
+      serviceConnection: $(publish.serviceConnectionName)
+      internalProjectName: ${{ parameters.internalProjectName }}
+      dockerClientOS: ${{ parameters.dockerClientOS }}
+      args: >
+        publishManifest
+        '$(imageInfoContainerDir)/image-info.json'
+        --repo-prefix '$(publishRepoPrefix)'
+        --os-type '*'
+        --architecture '*'
+        $(dryRunArg)
+        $(imageBuilder.pathArgs)
+        $(imageBuilder.commonCmdArgs)
+  - template: /eng/common/templates/steps/publish-artifact.yml@self
+    parameters:
+      path: $(imageInfoHostDir)
+      artifactName: image-info-final-$(System.JobAttempt)
+      displayName: Publish Image Info File Artifact
+      internalProjectName: ${{ parameters.internalProjectName }}
+      publicProjectName: ${{ parameters.publicProjectName }}
+  - template: /eng/common/templates/steps/wait-for-mcr-image-ingestion.yml@self
+    parameters:
+      imageInfoPath: '$(imageinfoContainerDir)/image-info.json'
       minQueueTime: $(imageQueueTime)
       dryRunArg: $(dryRunArg)
       condition: succeeded()
-  - template: ../steps/publish-readmes.yml
+  - template: /eng/common/templates/steps/publish-readmes.yml@self
     parameters:
       dryRunArg: $(dryRunArg)
       condition: and(succeeded(), eq(variables['publishReadme'], 'true'))
+  - script: mkdir -p $(Build.ArtifactStagingDirectory)/eol-annotation-data
+    displayName: Create EOL Annotation Data Directory
+  - script: >
+      curl -fSL
+      --output $(imageInfoHostDir)/full-image-info-orig.json
+      https://raw.githubusercontent.com/$(gitHubVersionsRepoInfo.org)/$(gitHubVersionsRepoInfo.repo)/refs/heads/$(gitHubVersionsRepoInfo.branch)/$(gitHubImageInfoVersionsPath)
+    condition: and(succeeded(), eq(variables['publishImageInfo'], 'true'))
+    displayName: Download Latest Image Info
+  - script: >
+      $(runImageBuilderCmd) mergeImageInfo
+      $(imageInfoContainerDir)
+      $(imageInfoContainerDir)/full-image-info-new.json
+      $(manifestVariables)
+      $(dryRunArg)
+      --manifest $(manifest)
+      --publish
+      --initial-image-info-path $(imageInfoContainerDir)/full-image-info-orig.json
+    condition: and(succeeded(), eq(variables['publishImageInfo'], 'true'))
+    displayName: Merge Image Info
+  - template: /eng/common/templates/steps/run-imagebuilder.yml@self
+    parameters:
+      displayName: Ingest Kusto Image Info
+      serviceConnection: $(kusto.serviceConnectionName)
+      internalProjectName: ${{ parameters.internalProjectName }}
+      condition: and(succeeded(), eq(variables['ingestKustoImageInfo'], 'true'))
+      args: >
+        ingestKustoImageInfo
+        '$(imageInfoContainerDir)/image-info.json'
+        '$(kusto.cluster)'
+        '$(kusto.database)'
+        '$(kusto.imageTable)'
+        '$(kusto.layerTable)'
+        --os-type '*'
+        --architecture '*'
+        $(dryRunArg)
+        $(imageBuilder.commonCmdArgs)
+  - template: /eng/common/templates/steps/run-imagebuilder.yml@self
+    parameters:
+      displayName: Generate EOL Annotation Data
+      serviceConnection: $(publish.serviceConnectionName)
+      internalProjectName: internal
+      condition: and(succeeded(), eq(variables['publishEolAnnotations'], 'true'))
+      args: >
+        generateEolAnnotationData
+        '$(artifactsPath)/eol-annotation-data/eol-annotation-data.json'
+        '$(imageInfoContainerDir)/full-image-info-orig.json'
+        '$(imageInfoContainerDir)/full-image-info-new.json'
+        '$(acr.server)'
+        '$(publishRepoPrefix)'
+        $(generateEolAnnotationDataExtraOptions)
+        $(dryRunArg)
+  - template: /eng/common/templates/steps/publish-artifact.yml@self
+    parameters:
+      path: $(Build.ArtifactStagingDirectory)/eol-annotation-data
+      artifactName: eol-annotation-data-$(System.JobAttempt)
+      displayName: Publish EOL Annotation Data Artifact
+      internalProjectName: internal
+      publicProjectName: public
+      condition: and(succeeded(), eq(variables['publishEolAnnotations'], 'true'))
+  - template: /eng/common/templates/steps/annotate-eol-digests.yml@self
+    parameters:
+      internalProjectName: ${{ parameters.internalProjectName }}
+      dataFile: $(artifactsPath)/eol-annotation-data/eol-annotation-data.json
   - script: >
       $(runImageBuilderCmd) publishImageInfo
-      '$(artifactsPath)/image-info.json'
+      '$(imageInfoContainerDir)/full-image-info-new.json'
       '$(gitHubVersionsRepoInfo.userName)'
       '$(gitHubVersionsRepoInfo.email)'
       '$(gitHubVersionsRepoInfo.accessToken)'
@@ -107,26 +184,10 @@ jobs:
     condition: and(succeeded(), eq(variables['publishImageInfo'], 'true'))
     displayName: Publish Image Info
   - script: >
-      $(runImageBuilderCmd) ingestKustoImageInfo
-      '$(artifactsPath)/image-info.json'
-      '$(kusto.cluster)'
-      '$(kusto.database)'
-      '$(kusto.imageTable)'
-      '$(kusto.layerTable)'
-      '$(kusto.servicePrincipalName)'
-      '$(kusto.servicePrincipalPassword)'
-      '$(kusto.servicePrincipalTenant)'
-      --os-type '*'
-      --architecture '*'
-      $(dryRunArg)
-      $(imageBuilder.commonCmdArgs)
-    displayName: Ingest Kusto Image Info
-    condition: and(succeeded(), eq(variables['ingestKustoImageInfo'], 'true'))
-  - script: >
       $(runImageBuilderCmd) postPublishNotification
       '$(publishNotificationRepoName)'
       '$(branchName)'
-      '$(artifactsPath)/image-info.json'
+      '$(imageInfoContainerDir)/image-info.json'
       $(Build.BuildId)
       '$(System.AccessToken)'
       '$(azdoOrgName)'
@@ -135,15 +196,29 @@ jobs:
       '$(gitHubNotificationsRepoInfo.org)'
       '$(gitHubNotificationsRepoInfo.repo)'
       --repo-prefix '$(publishRepoPrefix)'
-      --task "Copy Images"
-      --task "Publish Manifest"
-      --task "Wait for Image Ingestion"
+      --task "Copy Images (Authenticated)"
+      --task "Publish Manifest (Authenticated)"
+      --task "Wait for Image Ingestion (Authenticated)"
       --task "Publish Readmes"
-      --task "Wait for MCR Doc Ingestion"
+      --task "Wait for MCR Doc Ingestion (Authenticated)"
       --task "Publish Image Info"
-      --task "Ingest Kusto Image Info"
+      --task "Ingest Kusto Image Info (Authenticated)"
+      --task "Generate EOL Annotation Data (Authenticated)"
+      --task "Annotate EOL Images (Authenticated)"
+      --task "Wait for Annotation Ingestion (Authenticated)"
       $(dryRunArg)
       $(imageBuilder.commonCmdArgs)
     displayName: Post Publish Notification
     condition: and(always(), eq(variables['publishNotificationsEnabled'], 'true'))
-  - template: ../steps/cleanup-docker-linux.yml
+  - powershell: |
+      New-Item -ItemType Directory -Path $(sourceBuildIdOutputDir)
+      Set-Content -Path $(sourceBuildIdOutputDir)/source-build-id.txt -Value $(sourceBuildId)
+    condition: succeeded()
+    displayName: Write Source Build ID to File
+  - template: /eng/common/templates/steps/publish-artifact.yml@self
+    parameters:
+      path: $(sourceBuildIdOutputDir)
+      artifactName: source-build-id
+      displayName: Publish Source Build ID Artifact
+      internalProjectName: ${{ parameters.internalProjectName }}
+      publicProjectName: ${{ parameters.publicProjectName }}

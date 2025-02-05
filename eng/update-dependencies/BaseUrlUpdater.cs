@@ -7,7 +7,6 @@ using System.Linq;
 using Microsoft.DotNet.VersionTools.Dependencies;
 using Newtonsoft.Json.Linq;
 
-#nullable enable
 namespace Dotnet.Docker;
 
 /// <summary>
@@ -42,14 +41,16 @@ internal class BaseUrlUpdater : FileRegexUpdater
 
         if (_options.IsInternal)
         {
-            if (!_options.ProductVersions.TryGetValue("sdk", out string? sdkVersion) || string.IsNullOrEmpty(sdkVersion))
+            if (string.IsNullOrEmpty(_options.InternalBaseUrl))
             {
-                throw new InvalidOperationException("The sdk version must be set in order to derive the build's blob storage location.");
+                throw new InvalidOperationException("InternalBaseUrl must be set in order to update base url for internal builds");
             }
 
-            sdkVersion = sdkVersion.Replace(".", "-");
-
-            unresolvedBaseUrl = $"https://dotnetstage.blob.core.windows.net/{sdkVersion}-internal";
+            unresolvedBaseUrl = _options.InternalBaseUrl;
+        }
+        else if (_options.ReleaseState.HasValue)
+        {
+            unresolvedBaseUrl = $"$({ManifestHelper.GetBaseUrlVariableName(_options.ReleaseState.Value, _options.TargetBranch)})";
         }
         else
         {
@@ -60,4 +61,3 @@ internal class BaseUrlUpdater : FileRegexUpdater
         return unresolvedBaseUrl;
     }
 }
-#nullable disable
