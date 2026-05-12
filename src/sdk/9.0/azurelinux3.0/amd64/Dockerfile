@@ -1,14 +1,14 @@
 ARG REPO=mcr.microsoft.com/dotnet/aspnet
 # Installer image
-FROM $REPO:9.0.15-azurelinux3.0-amd64 AS installer
+FROM $REPO:9.0.16-azurelinux3.0-amd64 AS installer
 
 RUN tdnf install -y \
         tar \
     && tdnf clean all
 
 # Install .NET SDK
-RUN dotnet_sdk_version=9.0.313 \
-    && dotnet_version=9.0.15 \
+RUN dotnet_sdk_version=9.0.314 \
+    && dotnet_version=9.0.16 \
     && curl --fail --show-error --location \
         --remote-name https://builds.dotnet.microsoft.com/dotnet/Sdk/$dotnet_sdk_version/dotnet-sdk-$dotnet_sdk_version-linux-x64.tar.gz \
         --remote-name https://builds.dotnet.microsoft.com/dotnet/checksums/$dotnet_version-sha.txt \
@@ -22,7 +22,7 @@ RUN dotnet_sdk_version=9.0.313 \
 
 
 # .NET SDK image
-FROM $REPO:9.0.15-azurelinux3.0-amd64
+FROM $REPO:9.0.16-azurelinux3.0-amd64
 
 ENV \
     # Do not generate certificate
@@ -30,7 +30,7 @@ ENV \
     # Do not show first run text
     DOTNET_NOLOGO=true \
     # SDK version
-    DOTNET_SDK_VERSION=9.0.313 \
+    DOTNET_SDK_VERSION=9.0.314 \
     # Enable correct mode for dotnet watch (only mode supported in a container)
     DOTNET_USE_POLLING_FILE_WATCHER=true \
     # Skip extraction of XML docs - generally not useful within an image/container - helps performance
@@ -50,9 +50,9 @@ COPY --from=installer ["/dotnet", "/usr/share/dotnet"]
 RUN dotnet help
 
 # Install PowerShell global tool
-RUN powershell_version=7.5.5 \
+RUN powershell_version=7.5.6 \
     && curl --fail --show-error --location --output PowerShell.Linux.x64.$powershell_version.nupkg https://powershellinfraartifacts-gkhedzdeaghdezhr.z01.azurefd.net/tool/$powershell_version/PowerShell.Linux.x64.$powershell_version.nupkg \
-    && powershell_sha512='6a869c3e9a4c6c55b3758de28499e33f8926284f54635d0d6303e07dffec44dfbf4aa75ff67d35ffb9a4802701d6d759ba85c4d3cb80b3627b28b076f574ca93' \
+    && powershell_sha512='80887752f38dcdc067fb94c104d79abca8ccfd7a79773e738c0e0dbacf820cf991348055f5de69b7c5ff34b83ce7c3934480906e3e3ce9584da511791b06a243' \
     && echo "$powershell_sha512  PowerShell.Linux.x64.$powershell_version.nupkg" | sha512sum -c - \
     && mkdir --parents /usr/share/powershell \
     && dotnet tool install --add-source / --tool-path /usr/share/powershell --version $powershell_version PowerShell.Linux.x64 \

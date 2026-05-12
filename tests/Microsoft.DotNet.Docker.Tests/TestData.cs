@@ -48,14 +48,6 @@ namespace Microsoft.DotNet.Docker.Tests
                     ImageVariant = DotNetImageVariant.Composite, SupportedImageRepos = DotNetImageRepo.Aspnet },
             new ProductImageData { Version = V8_0, OS = OS.AzureLinux30Distroless, Arch = Arch.Amd64,   SdkOS = OS.AzureLinux30,
                     ImageVariant = DotNetImageVariant.Composite | DotNetImageVariant.Extra, SupportedImageRepos = DotNetImageRepo.Aspnet },
-            new ProductImageData { Version = V8_0, OS = OS.Mariner20,           Arch = Arch.Amd64 },
-            new ProductImageData { Version = V8_0, OS = OS.Mariner20Distroless, Arch = Arch.Amd64,   SdkOS = OS.Mariner20 },
-            new ProductImageData { Version = V8_0, OS = OS.Mariner20Distroless, Arch = Arch.Amd64,   SdkOS = OS.Mariner20,
-                    ImageVariant = DotNetImageVariant.Extra, SupportedImageRepos = DotNetImageRepo.Runtime_Deps | DotNetImageRepo.Runtime | DotNetImageRepo.Aspnet },
-            new ProductImageData { Version = V8_0, OS = OS.Mariner20Distroless, Arch = Arch.Amd64,   SdkOS = OS.Mariner20,
-                    ImageVariant = DotNetImageVariant.Composite, SupportedImageRepos = DotNetImageRepo.Aspnet },
-            new ProductImageData { Version = V8_0, OS = OS.Mariner20Distroless, Arch = Arch.Amd64,   SdkOS = OS.Mariner20,
-                    ImageVariant = DotNetImageVariant.Composite | DotNetImageVariant.Extra, SupportedImageRepos = DotNetImageRepo.Aspnet },
 
             new ProductImageData { Version = V8_0, OS = OS.AzureLinux30,           Arch = Arch.Arm64 },
             new ProductImageData { Version = V8_0, OS = OS.AzureLinux30Distroless, Arch = Arch.Arm64,   SdkOS = OS.AzureLinux30 },
@@ -64,14 +56,6 @@ namespace Microsoft.DotNet.Docker.Tests
             new ProductImageData { Version = V8_0, OS = OS.AzureLinux30Distroless, Arch = Arch.Arm64,   SdkOS = OS.AzureLinux30,
                     ImageVariant = DotNetImageVariant.Composite, SupportedImageRepos = DotNetImageRepo.Aspnet },
             new ProductImageData { Version = V8_0, OS = OS.AzureLinux30Distroless, Arch = Arch.Arm64,   SdkOS = OS.AzureLinux30,
-                    ImageVariant = DotNetImageVariant.Composite | DotNetImageVariant.Extra, SupportedImageRepos = DotNetImageRepo.Aspnet },
-            new ProductImageData { Version = V8_0, OS = OS.Mariner20,           Arch = Arch.Arm64 },
-            new ProductImageData { Version = V8_0, OS = OS.Mariner20Distroless, Arch = Arch.Arm64,   SdkOS = OS.Mariner20 },
-            new ProductImageData { Version = V8_0, OS = OS.Mariner20Distroless, Arch = Arch.Arm64,   SdkOS = OS.Mariner20,
-                    ImageVariant = DotNetImageVariant.Extra, SupportedImageRepos = DotNetImageRepo.Runtime_Deps | DotNetImageRepo.Runtime | DotNetImageRepo.Aspnet },
-            new ProductImageData { Version = V8_0, OS = OS.Mariner20Distroless, Arch = Arch.Arm64,   SdkOS = OS.Mariner20,
-                    ImageVariant = DotNetImageVariant.Composite, SupportedImageRepos = DotNetImageRepo.Aspnet },
-            new ProductImageData { Version = V8_0, OS = OS.Mariner20Distroless, Arch = Arch.Arm64,   SdkOS = OS.Mariner20,
                     ImageVariant = DotNetImageVariant.Composite | DotNetImageVariant.Extra, SupportedImageRepos = DotNetImageRepo.Aspnet },
             new ProductImageData { Version = V8_0, OS = OS.BookwormSlim,        Arch = Arch.Arm64 },
             new ProductImageData { Version = V8_0, OS = OS.Jammy,               Arch = Arch.Arm64 },
@@ -449,7 +433,7 @@ namespace Microsoft.DotNet.Docker.Tests
         private static readonly ProductImageData[] s_AspireDashboardTestData =
         {
             new() {
-                Version = V13_2,
+                Version = V13_3,
                 VersionFamily = V9_0,
                 OS = OS.AzureLinux30Distroless,
                 OSTag = "",
@@ -458,7 +442,7 @@ namespace Microsoft.DotNet.Docker.Tests
                 SupportedImageRepos = DotNetImageRepo.Aspire_Dashboard,
             },
             new() {
-                Version = V13_2,
+                Version = V13_3,
                 VersionFamily = V9_0,
                 OS = OS.AzureLinux30Distroless,
                 OSTag = "",

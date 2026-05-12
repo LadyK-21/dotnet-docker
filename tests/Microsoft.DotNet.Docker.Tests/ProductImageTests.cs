@@ -116,14 +116,7 @@ namespace Microsoft.DotNet.Docker.Tests
             string expectedUser;
             if (imageData.IsDistroless && ImageRepo != DotNetImageRepo.SDK)
             {
-                if (imageData.OS.Family == OSFamily.Mariner)
-                {
-                    expectedUser = "app";
-                }
-                else
-                {
-                    expectedUser = imageData.NonRootUID.ToString();
-                }
+                expectedUser = imageData.NonRootUID.ToString();
             }
             // For Windows, only Nano Server defines a user, which seems wrong.
             // I've logged https://dev.azure.com/microsoft/OS/_workitems/edit/40146885 for this.
@@ -237,8 +230,8 @@ namespace Microsoft.DotNet.Docker.Tests
                 // will report the distro package version and the binary package version as separate.
                 //
                 // openssl                      1.1.1k                binary
-                // openssl                      1.1.1k-29.cm2         rpm
-                //                              ^ Mariner specific version
+                // openssl                      1.1.1k-29.azl3        rpm
+                //                              ^ Azure Linux specific version
                 //
                 // So we need to remove duplicates.
                 .Distinct();
@@ -273,14 +266,6 @@ namespace Microsoft.DotNet.Docker.Tests
                         "prebuilt-ca-certificates",
                         "tzdata"
                     },
-                { OS.Family: OSFamily.Mariner } => new[]
-                    {
-                        "distroless-packages-minimal",
-                        "filesystem",
-                        "mariner-release",
-                        "prebuilt-ca-certificates",
-                        "tzdata"
-                    },
                 { OS.Family: OSFamily.Ubuntu } => new[]
                     {
                         "base-files"
@@ -291,7 +276,7 @@ namespace Microsoft.DotNet.Docker.Tests
         private static IEnumerable<string> GetRuntimeDepsPackages(ProductImageData imageData) {
             IEnumerable<string> packages = imageData switch
             {
-                { OS.Family: OSFamily.Mariner or OSFamily.AzureLinux } =>
+                { OS.Family: OSFamily.AzureLinux } =>
                     [
                         "glibc",
                         "libgcc",
@@ -313,7 +298,7 @@ namespace Microsoft.DotNet.Docker.Tests
                     [
                         "ca-certificates",
                         "gcc-14-base",
-                        ..GetResoluteChiseledAmd64Packages(imageData),
+                        ..GetResoluteChiseledArchSpecificPackages(imageData),
                         "libc6",
                         "libgcc-s1",
                         "libssl3t64",
@@ -387,20 +372,25 @@ namespace Microsoft.DotNet.Docker.Tests
 
         private static string GetZLibPackage(OSInfo os)
         {
-            OSFamily[] unversionedZLibOSFamilies = [OSFamily.Alpine, OSFamily.AzureLinux, OSFamily.Mariner];
+            OSFamily[] unversionedZLibOSFamilies = [OSFamily.Alpine, OSFamily.AzureLinux];
             return unversionedZLibOSFamilies.Contains(os.Family) ? "zlib" : "zlib1g";
         }
 
         /// <summary>
-        /// Syft detects gcc-16 and openssl-provider-legacy as separate binary packages
-        /// on amd64 resolute chiseled images but not on arm64/arm32.
+        /// Syft detects additional binary packages on specific architectures
+        /// for resolute chiseled images: gcc-16 on amd64, openssl-provider-legacy on arm32.
         /// </summary>
-        private static IEnumerable<string> GetResoluteChiseledAmd64Packages(ProductImageData imageData) =>
-            imageData.Arch == Arch.Amd64 ? ["gcc-16", "openssl-provider-legacy"] : [];
+        private static IEnumerable<string> GetResoluteChiseledArchSpecificPackages(ProductImageData imageData) =>
+            imageData.Arch switch
+            {
+                Arch.Amd64 => ["gcc-16"],
+                Arch.Arm => ["openssl-provider-legacy"],
+                _ => []
+            };
 
         private static IEnumerable<string> GetExtraPackages(ProductImageData imageData) => imageData switch
             {
-                { IsDistroless: true, OS.Family: OSFamily.Mariner or OSFamily.AzureLinux } => new[]
+                { IsDistroless: true, OS.Family: OSFamily.AzureLinux } => new[]
                     {
                         "icu",
                         "tzdata"
@@ -409,7 +399,8 @@ namespace Microsoft.DotNet.Docker.Tests
                     {
                         "icu",
                         "libicu78",
-                        "tzdata"
+                        "tzdata",
+                        "tzdata-legacy"
                     },
                 { OS: var os } when os == OS.NobleChiseled => new[]
                     {

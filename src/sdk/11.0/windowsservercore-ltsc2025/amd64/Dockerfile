@@ -10,8 +10,8 @@ RUN powershell -Command " `
         $ErrorActionPreference = 'Stop'; `
         $ProgressPreference = 'SilentlyContinue'; `
         `
-        Invoke-WebRequest -OutFile mingit.zip https://github.com/git-for-windows/git/releases/download/v2.53.0.windows.2/MinGit-2.53.0.2-64-bit.zip; `
-        $mingit_sha256 = 'd4bf83d6a860ccae9af44e508e1e00a39f09db6fa78a9ba5543b94d87ca22a29'; `
+        Invoke-WebRequest -OutFile mingit.zip https://github.com/git-for-windows/git/releases/download/v2.54.0.windows.1/MinGit-2.54.0-64-bit.zip; `
+        $mingit_sha256 = '04f937e1f0918b17b9be6f2294cb2bb66e96e1d9832d1c298e2de088a1d0e668'; `
         if ((Get-FileHash mingit.zip -Algorithm sha256).Hash -ne $mingit_sha256) { `
             Write-Host 'CHECKSUM VERIFICATION FAILED!'; `
             exit 1; `
@@ -25,7 +25,7 @@ RUN powershell -Command " `
         $ProgressPreference = 'SilentlyContinue'; `
         `
         # Retrieve .NET SDK
-        $dotnet_sdk_version = '11.0.100-preview.3.26207.106'; `
+        $dotnet_sdk_version = '11.0.100-preview.4.26230.115'; `
         $dotnet_file = 'dotnet-sdk-' + $dotnet_sdk_version + '-win-x64.zip'; `
         $dotnet_sha512_file = $dotnet_file + '.sha512'; `
         `
@@ -44,9 +44,9 @@ RUN powershell -Command " `
             $dotnet_sha512_file; `
         `
         # Install PowerShell global tool
-        $powershell_version = '7.6.0'; `
+        $powershell_version = '7.7.0-preview.1'; `
         Invoke-WebRequest -OutFile PowerShell.Windows.x64.$powershell_version.nupkg https://powershellinfraartifacts-gkhedzdeaghdezhr.z01.azurefd.net/tool/$powershell_version/PowerShell.Windows.x64.$powershell_version.nupkg; `
-        $powershell_sha512 = 'f47d1a6b15cd6eb603df661e51bba870d898fa669853b190b1a79268b18eacb66e38263575a2882e122aa37530ac064dceea499f03b0eea680506d3aa025cd38'; `
+        $powershell_sha512 = 'db6ee1bbdde9891526f760a2e8c482f0010fa73afa21d9e155de6e09bb17c51962863c0e5dac3e3a76d62d82deb1b95515dcbaf93fa1637a7ab654466da96c3e'; `
         if ((Get-FileHash PowerShell.Windows.x64.$powershell_version.nupkg -Algorithm sha512).Hash -ne $powershell_sha512) { `
             Write-Host 'CHECKSUM VERIFICATION FAILED!'; `
             exit 1; `
@@ -64,7 +64,7 @@ RUN powershell -Command " `
 
 
 # SDK image
-FROM $REPO:11.0.0-preview.3-windowsservercore-ltsc2025
+FROM $REPO:11.0.0-preview.4-windowsservercore-ltsc2025
 
 ENV `
     # Do not generate certificate
@@ -72,7 +72,7 @@ ENV `
     # Do not show first run text
     DOTNET_NOLOGO=true `
     # SDK version
-    DOTNET_SDK_VERSION=11.0.100-preview.3.26207.106 `
+    DOTNET_SDK_VERSION=11.0.100-preview.4.26230.115 `
     # Enable correct mode for dotnet watch (only mode supported in a container)
     DOTNET_USE_POLLING_FILE_WATCHER=true `
     # Skip extraction of XML docs - generally not useful within an image/container - helps performance

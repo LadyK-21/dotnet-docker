@@ -1,10 +1,10 @@
 ARG REPO=mcr.microsoft.com/dotnet/aspnet
 # Installer image
-FROM $REPO:9.0.15-alpine3.23-amd64 AS installer
+FROM $REPO:9.0.16-alpine3.23-amd64 AS installer
 
 # Install .NET SDK
-RUN dotnet_sdk_version=9.0.313 \
-    && dotnet_version=9.0.15 \
+RUN dotnet_sdk_version=9.0.314 \
+    && dotnet_version=9.0.16 \
     && wget \
         https://builds.dotnet.microsoft.com/dotnet/Sdk/$dotnet_sdk_version/dotnet-sdk-$dotnet_sdk_version-linux-musl-x64.tar.gz \
         https://builds.dotnet.microsoft.com/dotnet/checksums/$dotnet_version-sha.txt \
@@ -17,7 +17,7 @@ RUN dotnet_sdk_version=9.0.313 \
 
 
 # .NET SDK image
-FROM $REPO:9.0.15-alpine3.23-amd64
+FROM $REPO:9.0.16-alpine3.23-amd64
 
 ENV \
     # Do not generate certificate
@@ -25,7 +25,7 @@ ENV \
     # Do not show first run text
     DOTNET_NOLOGO=true \
     # SDK version
-    DOTNET_SDK_VERSION=9.0.313 \
+    DOTNET_SDK_VERSION=9.0.314 \
     # Disable the invariant mode (set in base image)
     DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false \
     # Enable correct mode for dotnet watch (only mode supported in a container)
@@ -49,9 +49,9 @@ COPY --from=installer ["/dotnet", "/usr/share/dotnet"]
 RUN dotnet help
 
 # Install PowerShell global tool
-RUN powershell_version=7.5.5 \
+RUN powershell_version=7.5.6 \
     && wget --output-document PowerShell.Linux.Alpine.$powershell_version.nupkg https://powershellinfraartifacts-gkhedzdeaghdezhr.z01.azurefd.net/tool/$powershell_version/PowerShell.Linux.Alpine.$powershell_version.nupkg \
-    && powershell_sha512='3a5880ea1b617eef0c071b1b9b14afce846a2197f99c46badbf39093cf6b18be7c7817573610584d60b6695ba464faacb6b7513a6efe0db1d4a428935c2bd056' \
+    && powershell_sha512='a4536608af2673036d971f93563338d5b3764d85b9ef47146bc81009157a00ceb317484bc163a9adf16c486ac9b6f0aa4bd06cf94ef339aa1100fad36cb23c6c' \
     && echo "$powershell_sha512  PowerShell.Linux.Alpine.$powershell_version.nupkg" | sha512sum -c - \
     && mkdir --parents /usr/share/powershell \
     && dotnet tool install --add-source / --tool-path /usr/share/powershell --version $powershell_version PowerShell.Linux.Alpine \
